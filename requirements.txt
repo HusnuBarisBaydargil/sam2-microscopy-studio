@@ -1,0 +1,13 @@
+# Runtime dependencies for the Flask SAM2 annotation app.
+# Keep notebooks, GUI annotation tools, training stacks, and test tools in requirements-dev.txt.
+flask==3.1.1
+flask-cors==6.0.1
+hydra-core==1.3.2
+iopath==0.1.10
+numpy==2.2.3
+omegaconf==2.3.0
+opencv-python-headless==4.11.0.86
+pillow==11.1.0
+torch==2.5.1
+torchvision==0.20.1
+tqdm==4.67.1
