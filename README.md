@@ -192,57 +192,6 @@ The browser can apply preprocessing for display. When preprocessing is active, S
 
 Supported preprocessing methods include CLAHE, gamma, CLAHE plus unsharp, gamma plus unsharp, and mild Retinex.
 
-## GitHub Commit Guidance
-
-Commit source code, tests, config examples, and documentation. Do not commit local runtime data, model checkpoints, caches, or generated annotations unless you intentionally want to publish sample data.
-
-Recommended commit order:
-
-1. **Project hygiene and runtime settings**
-   - `.gitignore`
-   - `.dockerignore`
-   - `project_settings.example.json`
-   - `Dockerfile`
-   - `requirements.txt`
-   - `requirements-dev.txt`
-   - `pytest.ini`
-   - `setup.py`
-
-2. **Backend application**
-   - `app.py`
-   - `scripts/check_setup.py`
-
-3. **Frontend application**
-   - `static/index.html`
-   - `static/style.css`
-   - `static/script.js`
-
-4. **Tests**
-   - `tests/conftest.py`
-   - `tests/test_annotation_formats.py`
-   - `tests/test_api_annotations.py`
-   - `tests/test_api_complex_flows.py`
-   - `tests/test_image_processing_and_sam.py`
-   - `tests/test_static_ui_contracts.py`
-
-5. **Documentation**
-   - `README.md`
-
-Do not commit:
-
-- `models/*.pt`
-- `annotations/`
-- `project_settings.json`
-- `.tmp/`
-- `.pytest_cache/`
-- `pytest-cache-files-*/`
-- `pytest_workspace_tmp/`
-- `__pycache__/`
-- `sam2.egg-info/`
-- local virtual environments such as `.venv/`, `venv/`, or `env/`
-
-If the `sam2/` directory is a vendored source dependency intentionally required by this repo, commit it deliberately in a separate commit. If it is an installed package checkout or generated local dependency, do not commit it.
-
 ## Troubleshooting
 
 - If SAM2 is unavailable, confirm both model files exist and run `python scripts/check_setup.py`.
