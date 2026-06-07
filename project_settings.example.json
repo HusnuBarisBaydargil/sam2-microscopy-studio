@@ -1,0 +1,24 @@
+{
+  "annotation_output_dir": "annotations",
+  "annotation_format": "csv",
+  "sam_settings": {
+    "preset": "cell_1920x1440",
+    "params": {
+      "points_per_side": 64,
+      "crop_n_layers": 2,
+      "min_mask_region_area": 400,
+      "crop_overlap_ratio": 0.4,
+      "crop_n_points_downscale_factor": 2,
+      "points_per_batch": 64,
+      "pred_iou_thresh": 0.92,
+      "stability_score_thresh": 0.92,
+      "stability_score_offset": 1.0,
+      "box_nms_thresh": 0.5,
+      "crop_nms_thresh": 0.5,
+      "use_m2m": true,
+      "area_mode": "pixels",
+      "min_overall_area": 300,
+      "max_overall_area": 30000
+    }
+  }
+}
