@@ -1,1 +1,0 @@
-# sam2-masksmith
