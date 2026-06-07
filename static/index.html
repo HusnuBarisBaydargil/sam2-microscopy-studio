@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAM2 Web Annotation Tool</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="top-bar">
+            <div class="top-brand">
+                <h1>SAM2 Annotator</h1>
+                <span>Bounding-box workflow</span>
+            </div>
+            <div class="top-workflow">
+                <label for="loadImageInput" class="btn btn-primary">Load Image</label>
+                <input type="file" id="loadImageInput" accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff,image/jpeg,image/png,image/bmp,image/tiff" hidden>
+                <label for="openFolderInput" class="btn btn-secondary">Open Folder</label>
+                <input type="file" id="openFolderInput" accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff,image/jpeg,image/png,image/bmp,image/tiff" webkitdirectory directory multiple hidden>
+                <button id="runSamBtn" class="btn btn-primary" disabled>Run SAM2 & Filter</button>
+                <button id="clearCandidatesBtn" class="btn btn-secondary" disabled>Clear Candidates</button>
+                <button id="manualAnnotationBtn" class="btn btn-primary manual-toggle-btn" disabled>Manual Box (B)</button>
+                <label class="checkbox-row top-checkbox" for="keepAnnotationsInput">
+                    <input type="checkbox" id="keepAnnotationsInput" checked>
+                    <span>Keep annotations</span>
+                </label>
+            </div>
+            <div class="top-save-actions">
+                <button id="saveServerBtn" class="btn btn-secondary" disabled>Save</button>
+                <button id="saveAllServerBtn" class="btn btn-secondary" disabled>Save All</button>
+                <button id="exportAnnotationFileBtn" class="btn btn-primary" disabled>Export</button>
+                <button id="helpBtn" class="btn btn-secondary help-btn" title="Help & Shortcuts">?</button>
+            </div>
+            <div id="status-panel" class="status-panel" role="status" aria-live="polite">
+                <strong>Status:</strong> <span id="statusText">Please load an image.</span>
+            </div>
+        </header>
+
+        <aside class="side-panel project-panel">
+            <section class="card">
+                <h3>Project</h3>
+                <div class="current-image-panel">
+                    <span class="current-image-label">Current image</span>
+                    <span id="currentImageName" class="current-image-name">None</span>
+                    <span id="currentPreprocessBadge" class="preprocess-badge hidden" title="Original image is preserved; display and SAM input use the selected preprocessing while active.">Processed view + SAM input</span>
+                    <span id="imagePosition" class="image-position">0 / 0</span>
+                    <span id="currentImageState" class="image-state-summary">No image loaded.</span>
+                </div>
+                <div class="image-nav-controls">
+                    <button id="prevImageBtn" class="btn btn-secondary" disabled>Previous</button>
+                    <button id="nextImageBtn" class="btn btn-secondary" disabled>Next</button>
+                </div>
+                <div id="imageList" class="image-list"></div>
+            </section>
+            <section class="card">
+                <h3>Annotation Source</h3>
+                <div class="project-settings-panel">
+                    <label for="annotationDirInput">Annotation folder</label>
+                    <div class="annotation-dir-row">
+                        <input type="text" id="annotationDirInput" class="form-control" placeholder="annotations">
+                        <button id="setAnnotationDirBtn" class="btn btn-secondary">Set</button>
+                    </div>
+                    <span id="annotationDirDisplay" class="annotation-dir-display">annotations</span>
+                    <div class="annotation-source-picker">
+                        <button id="loadAnnotationSourceFilesBtn" class="btn btn-secondary" type="button">Load Annotation Files</button>
+                        <button id="loadAnnotationSourceFolderBtn" class="btn btn-secondary" type="button">Load Annotation Folder</button>
+                        <button id="useServerAnnotationSourceBtn" class="btn btn-secondary" type="button" disabled>Use Server Folder</button>
+                        <input type="file" id="annotationSourceFilesInput" accept=".csv,.txt,.json,.xml,text/csv,text/plain,application/json,application/xml,text/xml" multiple hidden>
+                        <input type="file" id="annotationSourceFolderInput" accept=".csv,.txt,.json,.xml,text/csv,text/plain,application/json,application/xml,text/xml" webkitdirectory directory multiple hidden>
+                    </div>
+                    <div id="annotationSourceDisplay" class="annotation-source-display">Server folder source active.</div>
+                    <div class="form-group">
+                        <label for="annotationFormatSelect">Annotation format</label>
+                        <select id="annotationFormatSelect" class="form-control">
+                            <option value="csv">CSV</option>
+                            <option value="yolo">YOLO TXT</option>
+                            <option value="coco">COCO JSON</option>
+                            <option value="voc">Pascal VOC XML</option>
+                        </select>
+                    </div>
+                    <div class="match-action-row">
+                        <button id="refreshMatchesBtn" class="btn btn-secondary" disabled>Check Matches</button>
+                        <button id="loadMatchedBtn" class="btn btn-secondary" disabled>Load Matched</button>
+                    </div>
+                    <div id="matchSummary" class="match-summary">No image folder checked.</div>
+                </div>
+            </section>
+            <section class="card">
+                <h3>SAM2</h3>
+                <div class="sam-preset-panel">
+                    <div class="sam-preset-header">
+                        <label for="samPresetSelect">SAM preset</label>
+                        <button id="openSamSettingsBtn" class="btn btn-secondary sam-expert-btn" type="button">Expert Settings</button>
+                    </div>
+                    <select id="samPresetSelect" class="form-control"></select>
+                    <div class="sam-preset-meta">
+                        <span>Active preset</span>
+                        <span id="samPresetSummary">Cell 1920x1440</span>
+                    </div>
+                    <div id="samRiskText" class="sam-risk-text">Current preset is within normal limits.</div>
+                </div>
+            </section>
+        </aside>
+
+        <main class="main-content">
+            <div id="canvas-container">
+                <canvas id="mainCanvas"></canvas>
+
+                <div id="view-controls" class="view-controls">
+                    <button id="zoomInBtn" class="view-control-btn" title="Zoom In">+</button>
+                    <button id="zoomOutBtn" class="view-control-btn" title="Zoom Out">-</button>
+                    <button id="resetViewBtn" class="view-control-btn" title="Reset View">Fit</button>
+                    <span id="zoomLevelDisplay" class="view-control-display">100%</span>
+                </div>
+                <div id="preprocessOverlay" class="preprocess-overlay hidden">
+                    <span id="preprocessOverlayTitle">Preprocessing active</span>
+                    <small id="preprocessOverlayDetail">Display and SAM input use the processed image</small>
+                </div>
+                <div id="loader" class="loader-overlay hidden">
+                    <div class="spinner"></div>
+                    <p id="loaderText">Processing...</p>
+                </div>
+            </div>
+        </main>
+
+        <aside class="side-panel annotation-panel">
+            <section class="card">
+                <h3>Image Tools</h3>
+                <div class="preprocess-panel">
+                    <label for="preprocessMethodSelect">Preprocessing</label>
+                    <select id="preprocessMethodSelect" class="form-control">
+                        <option value="original">Original</option>
+                        <option value="clahe">CLAHE</option>
+                        <option value="gamma">Gamma</option>
+                        <option value="clahe_unsharp">CLAHE + Unsharp</option>
+                        <option value="gamma_unsharp">Gamma + Unsharp</option>
+                        <option value="retinex_mild">Retinex mild</option>
+                    </select>
+                    <div class="preprocess-action-grid">
+                        <button id="applyPreprocessBtn" class="btn btn-secondary" disabled>Apply</button>
+                        <button id="openPreprocessSettingsBtn" class="btn btn-secondary" type="button">Expert</button>
+                        <button id="restoreOriginalBtn" class="btn btn-secondary" disabled>Restore Original</button>
+                    </div>
+                    <div id="preprocessSummary" class="preprocess-summary">Original image is preserved.</div>
+                </div>
+            </section>
+            <section class="card">
+                <h3>Classes</h3>
+                <div id="classManager" class="class-manager"></div>
+                <button id="addClassBtn" class="btn btn-secondary class-add-btn">Add Class</button>
+            </section>
+            <section class="card">
+                <h3>Annotation Actions</h3>
+                <div class="action-group">
+                    <div class="form-group">
+                        <label for="classificationSelect">Class:</label>
+                        <select id="classificationSelect" class="form-control" disabled>
+                            <option value="">Create a class first</option>
+                        </select>
+                    </div>
+                    <div class="quick-class-row">
+                        <input type="text" id="quickClassInput" class="form-control" placeholder="New class name">
+                        <button id="quickAddClassBtn" class="btn btn-secondary" type="button">Add Class</button>
+                    </div>
+                    <button id="applyClassificationBtn" class="btn btn-primary" disabled>Apply to Selection</button>
+                    <label class="one-click-accept-row" for="oneClickAcceptInput">
+                        <input type="checkbox" id="oneClickAcceptInput" disabled>
+                        <span>One-click accept active class</span>
+                    </label>
+                    <button id="undoBtn" class="btn btn-secondary" disabled>Undo Batch (U)</button>
+                    <div class="annotation-inspector">
+                        <div class="inspector-header">
+                            <span>Selected Box</span>
+                            <span id="selectedAnnotationSummary">None</span>
+                        </div>
+                        <div class="bbox-grid">
+                            <label for="bboxXInput">X</label>
+                            <input type="number" id="bboxXInput" class="bbox-input" step="1" disabled>
+                            <label for="bboxYInput">Y</label>
+                            <input type="number" id="bboxYInput" class="bbox-input" step="1" disabled>
+                            <label for="bboxWInput">W</label>
+                            <input type="number" id="bboxWInput" class="bbox-input" step="1" min="1" disabled>
+                            <label for="bboxHInput">H</label>
+                            <input type="number" id="bboxHInput" class="bbox-input" step="1" min="1" disabled>
+                        </div>
+                        <button id="applyBoxEditBtn" class="btn btn-secondary" disabled>Apply Box Edit</button>
+                    </div>
+                    <div class="annotation-file-actions">
+                        <button id="loadAnnotationFileBtn" class="btn btn-secondary" disabled>Import File</button>
+                        <input type="file" id="loadAnnotationFileInput" accept=".csv,.txt,.json,.xml,text/csv,text/plain,application/json,application/xml,text/xml" hidden>
+                        <button id="loadServerAnnotationsBtn" class="btn btn-secondary" disabled>Load Saved</button>
+                    </div>
+                </div>
+            </section>
+            <section class="card log-card">
+                <h3>Annotation Log</h3>
+                <div class="table-container">
+                    <table>
+                        <thead> <tr> <th>ID</th> <th>Class</th> <th>Bounding Box</th> </tr> </thead>
+                        <tbody id="annotationLogBody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </aside>
+    </div>
+    <div id="logContextMenu" class="context-menu hidden">
+        <div class="context-menu-item context-menu-item-delete" id="logDeleteBtn">Delete</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" id="logCancelBtn">Cancel</div>
+    </div>
+    
+    <div id="samSettingsModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="samSettingsTitle" aria-describedby="samSettingsWarning">
+        <div class="modal-content sam-settings-modal-content">
+            <header class="modal-header">
+                <h2 id="samSettingsTitle">Expert SAM Settings</h2>
+                <button id="closeSamSettingsBtn" class="close-btn" aria-label="Close Expert SAM Settings">&times;</button>
+            </header>
+            <div class="modal-body">
+                <div id="samSettingsWarning" class="sam-warning">
+                    Expert SAM settings can make segmentation slow, unstable, or run out of GPU memory.
+                </div>
+                <div class="sam-settings-grid">
+                    <label for="samAreaModeSelect">Area mode</label>
+                    <select id="samAreaModeSelect" class="form-control">
+                        <option value="pixels">Pixels</option>
+                        <option value="percent">% image area</option>
+                    </select>
+
+                    <label for="samPointsPerSideInput">Points/side</label>
+                    <input type="number" id="samPointsPerSideInput" class="form-control sam-param-input" min="8" max="128" step="1">
+
+                    <label for="samCropLayersInput">Crop layers</label>
+                    <input type="number" id="samCropLayersInput" class="form-control sam-param-input" min="0" max="3" step="1">
+
+                    <label for="samCropOverlapInput">Crop overlap</label>
+                    <input type="number" id="samCropOverlapInput" class="form-control sam-param-input" min="0" max="0.9" step="0.05">
+
+                    <label for="samCropDownscaleInput">Crop downscale</label>
+                    <input type="number" id="samCropDownscaleInput" class="form-control sam-param-input" min="1" max="8" step="1">
+
+                    <label for="samPointsPerBatchInput">Points/batch</label>
+                    <input type="number" id="samPointsPerBatchInput" class="form-control sam-param-input" min="16" max="256" step="1">
+
+                    <label for="samMinMaskRegionAreaInput">Min mask region</label>
+                    <input type="number" id="samMinMaskRegionAreaInput" class="form-control sam-param-input" min="0" step="1">
+
+                    <label for="samMinObjectAreaInput">Min object area</label>
+                    <input type="number" id="samMinObjectAreaInput" class="form-control sam-param-input" min="0" step="any">
+
+                    <label for="samMaxObjectAreaInput">Max object area</label>
+                    <input type="number" id="samMaxObjectAreaInput" class="form-control sam-param-input" min="0" step="any">
+
+                    <label for="samPredIouInput">Pred IoU</label>
+                    <input type="number" id="samPredIouInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
+
+                    <label for="samStabilityInput">Stability</label>
+                    <input type="number" id="samStabilityInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
+
+                    <label for="samStabilityOffsetInput">Stability offset</label>
+                    <input type="number" id="samStabilityOffsetInput" class="form-control sam-param-input" min="0" max="2" step="0.1">
+
+                    <label for="samBoxNmsInput">Box NMS</label>
+                    <input type="number" id="samBoxNmsInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
+
+                    <label for="samCropNmsInput">Crop NMS</label>
+                    <input type="number" id="samCropNmsInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
+
+                    <label for="samUseM2mInput">Use M2M</label>
+                    <input type="checkbox" id="samUseM2mInput" class="sam-checkbox">
+                </div>
+                <div class="sam-settings-actions">
+                    <button id="applySamSettingsBtn" class="btn btn-primary" type="button">Apply SAM Settings</button>
+                    <button id="resetSamPresetBtn" class="btn btn-secondary" type="button">Reset to Preset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="preprocessSettingsModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="preprocessSettingsTitle" aria-describedby="preprocessSettingsWarning">
+        <div class="modal-content preprocess-settings-modal-content">
+            <header class="modal-header">
+                <h2 id="preprocessSettingsTitle">Expert Preprocessing</h2>
+                <button id="closePreprocessSettingsBtn" class="close-btn" aria-label="Close Expert Preprocessing">&times;</button>
+            </header>
+            <div class="modal-body">
+                <div id="preprocessSettingsWarning" class="preprocess-warning">
+                    Preprocessing changes the displayed image and SAM input only. The original image and annotation coordinates are preserved.
+                </div>
+                <div class="preprocess-settings-grid">
+                    <label for="preprocessGammaInput">Gamma</label>
+                    <input type="number" id="preprocessGammaInput" class="form-control preprocess-param-input" min="0.2" max="3" step="0.05">
+
+                    <label for="preprocessClaheClipInput">CLAHE clip</label>
+                    <input type="number" id="preprocessClaheClipInput" class="form-control preprocess-param-input" min="0.5" max="8" step="0.1">
+
+                    <label for="preprocessClaheTileInput">CLAHE tile</label>
+                    <input type="number" id="preprocessClaheTileInput" class="form-control preprocess-param-input" min="2" max="32" step="1">
+
+                    <label for="preprocessUnsharpAmountInput">Unsharp amount</label>
+                    <input type="number" id="preprocessUnsharpAmountInput" class="form-control preprocess-param-input" min="0" max="3" step="0.05">
+
+                    <label for="preprocessUnsharpRadiusInput">Unsharp radius</label>
+                    <input type="number" id="preprocessUnsharpRadiusInput" class="form-control preprocess-param-input" min="0.3" max="6" step="0.1">
+
+                    <label for="preprocessUnsharpThresholdInput">Unsharp threshold</label>
+                    <input type="number" id="preprocessUnsharpThresholdInput" class="form-control preprocess-param-input" min="0" max="255" step="1">
+
+                    <label for="preprocessRetinexStrengthInput">Retinex strength</label>
+                    <input type="number" id="preprocessRetinexStrengthInput" class="form-control preprocess-param-input" min="0.1" max="1" step="0.05">
+                </div>
+                <div class="preprocess-settings-actions">
+                    <button id="applyPreprocessSettingsBtn" class="btn btn-primary" type="button">Apply Settings</button>
+                    <button id="resetPreprocessSettingsBtn" class="btn btn-secondary" type="button">Reset Defaults</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="helpModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2 id="helpModalTitle">Help & Shortcuts</h2>
+                <button id="closeHelpBtn" class="close-btn" aria-label="Close Help">&times;</button>
+            </header>
+            <div class="modal-body">
+                <h3>Basic Workflow</h3>
+                <ol>
+                    <li><b>Load Image:</b> Use the "Load Image" button to open a valid image file (`.tif`, `.jpg`, etc.).</li>
+                    <li><b>Annotation folder:</b> Set the server folder and format for CSV, YOLO, COCO, or Pascal VOC annotations, then use Check Matches to scan the opened images.</li>
+                    <li><b>Classes:</b> New projects start without classes. Add a class manually or import annotations with class labels.</li>
+                    <li><b>Annotation source:</b> Use the server folder path, or load local annotation files/folders to match against the opened images in the browser.</li>
+                    <li><b>Run SAM2 & Filter:</b> Click this to run or re-run the AI model on the server. Re-runs replace current candidates and can keep existing annotations.</li>
+                    <li><b>Advanced SAM:</b> Use presets or custom values only when the default SAM behavior is not suitable for the image size or object type.</li>
+                    <li><b>Classify Candidates:</b> Click one or more candidate boxes, create a class if needed, then use Apply to Selection. Enable one-click accept to convert clicked candidates immediately with the active class.</li>
+                </ol>
+
+                <h3>Manual Annotation</h3>
+                <p>For objects the AI missed, click the <b>"Manual Box"</b> button to enter drawing mode. Click and drag on the image to draw a new box. When you release the mouse, a menu will appear to classify or cancel it.</p>
+
+                <h3>Editing Annotations</h3>
+                <ul>
+                    <li><b>Move:</b> Select a box, then drag inside it.</li>
+                    <li><b>Resize:</b> Select a box, then drag one of its white handles.</li>
+                    <li><b>Precise edit:</b> Use the Selected Box fields for exact x/y/w/h values.</li>
+                    <li><b>Nudge:</b> Select boxes and use arrow keys. Hold Shift for larger moves.</li>
+                </ul>
+                
+                <h3>Canvas Controls</h3>
+                <ul>
+                    <li><b>Pan:</b> Click and drag the image background.</li>
+                    <li><b>Zoom:</b> Use your mouse wheel or the <b>+</b> / <b>-</b> buttons in the bottom-right corner.</li>
+                    <li><b>Reset View:</b> Click the <b>Fit</b> button to fit the entire image in the view.</li>
+                </ul>
+
+                <h3>Keyboard Shortcuts</h3>
+                <ul>
+                    <li><b>B:</b> Toggle Manual Box mode.</li>
+                    <li><b>Class hotkeys:</b> Configure each class shortcut in the Classes panel.</li>
+                    <li><b>U:</b> Undo the last classification batch.</li>
+                    <li><b>Delete:</b> Delete an annotation currently highlighted in the log.</li>
+                    <li><b>Import File:</b> Import an existing CSV, YOLO TXT, COCO JSON, or Pascal VOC XML file for the loaded image.</li>
+                    <li><b>Load Matched:</b> Import all matched annotation files for the opened image folder. Ambiguous duplicate image names are skipped until path-specific annotation files exist.</li>
+                    <li><b>Save to Server:</b> Write annotations to the app's server-side annotations folder.</li>
+                    <li><b>Escape:</b> Exit Manual Mode, cancel a drawing, or close this window.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script src="static/script.js"></script>
+</body>
+</html>
