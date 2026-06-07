@@ -43,6 +43,49 @@ Dockerfile                     Optional container runtime
 
 The app can start without loading SAM2 when `SKIP_SAM_MODEL_LOAD=1`, which is useful for tests and API work.
 
+## SAM2 Attribution And Model Weights
+
+This project is an annotation interface built around Meta FAIR's Segment Anything Model 2 (SAM2). It is not an official Meta project.
+
+SAM2 resources:
+
+- Paper: [SAM 2: Segment Anything in Images and Videos](https://arxiv.org/abs/2408.00714)
+- Official project page: [Meta Segment Anything Model 2](https://ai.meta.com/research/sam2/)
+- Official GitHub repository: [facebookresearch/sam2](https://github.com/facebookresearch/sam2)
+- SAM2.1 large checkpoint: [sam2.1_hiera_large.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt)
+
+The checkpoint file is intentionally not included in this repository because it is large. Download it from the official SAM2 checkpoint link above and place it here:
+
+```text
+models/sam2.1_hiera_large.pt
+```
+
+The model config file should be present here:
+
+```text
+models/sam2.1_hiera_l.yaml
+```
+
+Expected local layout:
+
+```text
+models/
+  sam2.1_hiera_l.yaml
+  sam2.1_hiera_large.pt
+```
+
+If you use this annotator in research or publish results produced with SAM2, cite the SAM2 paper:
+
+```bibtex
+@article{ravi2024sam2,
+  title={SAM 2: Segment Anything in Images and Videos},
+  author={Ravi, Nikhila and Gabeur, Valentin and Hu, Yuan-Ting and Hu, Ronghang and Ryali, Chaitanya and Ma, Tengyu and Khedr, Haitham and R{\"a}dle, Roman and Rolland, Chloe and Gustafson, Laura and Mintun, Eric and Pan, Junting and Alwala, Kalyan Vasudev and Carion, Nicolas and Wu, Chao-Yuan and Girshick, Ross and Doll{\'a}r, Piotr and Feichtenhofer, Christoph},
+  journal={arXiv preprint arXiv:2408.00714},
+  url={https://arxiv.org/abs/2408.00714},
+  year={2024}
+}
+```
+
 ## Local Setup
 
 Create an environment and install runtime dependencies:
@@ -61,6 +104,8 @@ models/
   sam2.1_hiera_l.yaml
   sam2.1_hiera_large.pt
 ```
+
+If the checkpoint is missing, the app can still start only when `SKIP_SAM_MODEL_LOAD=1`, but SAM2 inference will be unavailable.
 
 Validate the setup:
 
