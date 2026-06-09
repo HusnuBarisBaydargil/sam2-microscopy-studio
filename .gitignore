@@ -1,0 +1,28 @@
+# Python/cache artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+pytest_workspace_tmp/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime state
+annotations/
+project_settings.json
+project_classes.json
+.tmp/
+
+# Large/local model files
+models/*.pt
+models/*.pth
+models/*.ckpt
+
+# Local notebooks
+.ipynb_checkpoints/
