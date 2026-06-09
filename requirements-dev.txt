@@ -1,0 +1,18 @@
+# Development, testing, and exploratory tools.
+-r requirements.txt
+
+pytest==8.3.4
+pytest-cov==6.0.0
+pytest-flask==1.3.0
+ruff==0.8.6
+
+# Optional notebooks and analysis utilities; install only when needed.
+ipykernel==6.29.5
+notebook==7.3.2
+pandas==2.2.3
+matplotlib==3.10.1
+seaborn==0.13.2
+
+# Optional dataset/model conversion and inspection helpers.
+pycocotools==2.0.10
+ultralytics==8.3.94
