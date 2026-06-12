@@ -3,7 +3,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const DEFAULT_CLASSES = [];
     const ANNOTATION_FORMATS = {
         csv: {
-            label: 'CSV',
+            label: 'Simple CSV',
+            extension: 'csv',
+            mime: 'text/csv',
+            accept: '.csv,text/csv'
+        },
+        csv_rich: {
+            label: 'Rich CSV',
             extension: 'csv',
             mime: 'text/csv',
             accept: '.csv,text/csv'
@@ -167,6 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const samSettingsModal = document.getElementById('samSettingsModal');
     const closeSamSettingsBtn = document.getElementById('closeSamSettingsBtn');
     const samPresetSummary = document.getElementById('samPresetSummary');
+    const samDeviceSelect = document.getElementById('samDeviceSelect');
+    const samDeviceStatus = document.getElementById('samDeviceStatus');
     const samPresetSelect = document.getElementById('samPresetSelect');
     const samAreaModeSelect = document.getElementById('samAreaModeSelect');
     const samPointsPerSideInput = document.getElementById('samPointsPerSideInput');
@@ -288,6 +296,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 params: { ...DEFAULT_SAM_PARAMS },
                 warnings: []
             },
+            samDevice: {
+                mode: 'auto',
+                active: 'unknown',
+                cudaAvailable: false,
+                ready: false,
+                modelLoadSkipped: false,
+                error: ''
+            },
             preprocessParams: { ...DEFAULT_PREPROCESS_PARAMS }
         },
         samPresets: DEFAULT_SAM_PRESETS.map(preset => ({
@@ -337,6 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     samPresetSelect.addEventListener('change', handleSamPresetChange);
+    samDeviceSelect.addEventListener('change', handleSamDeviceChange);
     samAreaModeSelect.addEventListener('change', handleSamSettingsInput);
     [
         samPointsPerSideInput,
@@ -1299,7 +1316,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (appState.classes.some((cls, clsIndex) => clsIndex !== index && cls.name === newName)) {
-            showToast(`Class "${newName}" already exists.`, 'error');
+            const msg = `Class "${newName}" already exists. Select annotations and use Apply to Selection to reassign them.`;
+            updateStatus(msg);
+            showToast(msg, 'info');
             renderClassControls(oldName);
             return;
         }
@@ -1352,21 +1371,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const classToDelete = appState.classes[index];
         if (!classToDelete) return;
 
-        const affectedCount = countAnnotationsWithClass(classToDelete.name);
+        const affectedCount = countCurrentImageAnnotationsWithClass(classToDelete.name);
 
         if (affectedCount > 0) {
             const confirmed = window.confirm(
-                `Are you sure you want to delete the class "${classToDelete.name}" and ${affectedCount} annotation${affectedCount === 1 ? '' : 's'}?`
+                `Delete class "${classToDelete.name}" and remove ${affectedCount} annotation${affectedCount === 1 ? '' : 's'} from the current image? Other loaded images will not be changed.`
             );
             if (!confirmed) return;
         }
 
-        appState.classes.splice(index, 1);
-        scheduleProjectClassesSave();
+        const keepClassForOtherImages = countOtherImageAnnotationsWithClass(classToDelete.name) > 0;
 
-        const deletedCount = deleteAnnotationsWithClass(classToDelete.name);
+        const deletedCount = deleteCurrentImageAnnotationsWithClass(classToDelete.name);
 
-        const preferredClass = classificationSelect.value === classToDelete.name
+        if (!keepClassForOtherImages) {
+            appState.classes.splice(index, 1);
+            scheduleProjectClassesSave();
+        }
+
+        const preferredClass = !keepClassForOtherImages && classificationSelect.value === classToDelete.name
             ? ''
             : classificationSelect.value;
         renderClassControls(preferredClass);
@@ -1375,9 +1398,16 @@ document.addEventListener('DOMContentLoaded', () => {
         renderImageBrowser();
         draw();
 
-        const msg = deletedCount > 0
-            ? `Deleted "${classToDelete.name}" and ${deletedCount} annotations.`
-            : `Deleted class "${classToDelete.name}".`;
+        let msg;
+        if (deletedCount > 0 && keepClassForOtherImages) {
+            msg = `Removed ${deletedCount} current-image "${classToDelete.name}" annotations. Class kept because it is used on other loaded images.`;
+        } else if (deletedCount > 0) {
+            msg = `Deleted "${classToDelete.name}" and ${deletedCount} current-image annotations.`;
+        } else if (keepClassForOtherImages) {
+            msg = `Class "${classToDelete.name}" is used on other loaded images, so it was kept.`;
+        } else {
+            msg = `Deleted class "${classToDelete.name}".`;
+        }
         updateStatus(msg);
         showToast(msg, 'info');
         updateButtonStates();
@@ -2391,6 +2421,35 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function handleSamDeviceChange() {
+        const samDevice = samDeviceSelect.value || 'auto';
+        setLoader(true, 'Updating SAM2 device...');
+
+        try {
+            const response = await apiFetch(apiPath('/api/project/settings'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sam_device: samDevice })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `Server error: ${response.statusText}`);
+            if (data.error) throw new Error(data.error);
+
+            applyProjectSettings(data);
+            const device = appState.projectSettings.samDevice;
+            const msg = `SAM2 device set to ${samDeviceLabel(device)}.`;
+            updateStatus(msg);
+            showToast(msg, device.ready || device.modelLoadSkipped ? 'success' : 'info');
+        } catch (error) {
+            renderSamDevicePanel();
+            const msg = `Failed to update SAM2 device: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+        } finally {
+            setLoader(false);
+        }
+    }
+
     function handleResetSamPreset() {
         const selectedPreset = samPresetSelect.value === 'custom' ? DEFAULT_SAM_PRESET : samPresetSelect.value;
         const preset = findSamPreset(selectedPreset) || findSamPreset(DEFAULT_SAM_PRESET);
@@ -2455,7 +2514,17 @@ document.addEventListener('DOMContentLoaded', () => {
         samMinObjectAreaInput.title = areaSuffix;
         samMaxObjectAreaInput.title = areaSuffix;
         samPresetSummary.textContent = currentSamPresetLabel();
+        renderSamDevicePanel();
         updateSamRiskText();
+    }
+
+    function renderSamDevicePanel() {
+        const device = appState.projectSettings.samDevice || normalizeSamDeviceForClient();
+        samDeviceSelect.value = ['auto', 'cuda', 'cpu'].includes(device.mode) ? device.mode : 'auto';
+        samDeviceStatus.textContent = samDeviceLabel(device);
+        samDeviceStatus.title = samDeviceTitle(device);
+        samDeviceStatus.classList.toggle('warning', !device.ready || device.active === 'cpu' || Boolean(device.error));
+        samDeviceStatus.classList.toggle('ready', device.ready && device.active === 'cuda');
     }
 
     function readSamSettingsFromInputs() {
@@ -2509,6 +2578,36 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             warnings: Array.isArray(samSettings?.warnings) ? samSettings.warnings : []
         };
+    }
+
+    function normalizeSamDeviceForClient(samDevice = {}) {
+        const mode = ['auto', 'cuda', 'cpu'].includes(samDevice.mode) ? samDevice.mode : 'auto';
+        return {
+            mode,
+            active: String(samDevice.active || 'unknown'),
+            cudaAvailable: Boolean(samDevice.cuda_available ?? samDevice.cudaAvailable),
+            ready: Boolean(samDevice.ready),
+            modelLoadSkipped: Boolean(samDevice.model_load_skipped ?? samDevice.modelLoadSkipped),
+            error: String(samDevice.error || '')
+        };
+    }
+
+    function samDeviceLabel(device) {
+        if (device.error) return 'Needs attention';
+        if (device.modelLoadSkipped) return 'Load skipped';
+        if (device.mode === 'auto' && device.active === 'cuda') return 'Auto -> CUDA';
+        if (device.mode === 'auto' && device.active === 'cpu') return 'Auto -> CPU';
+        if (device.active === 'cuda') return 'CUDA';
+        if (device.active === 'cpu') return 'CPU';
+        return device.mode.toUpperCase();
+    }
+
+    function samDeviceTitle(device) {
+        if (device.error) return device.error;
+        if (device.modelLoadSkipped) return 'SAM2 model loading is disabled with SKIP_SAM_MODEL_LOAD=1.';
+        if (device.active === 'cpu') return 'SAM2 is running on CPU; inference may be slow.';
+        if (device.active === 'cuda') return 'SAM2 is running with CUDA acceleration.';
+        return device.cudaAvailable ? 'CUDA is available.' : 'CUDA is not available.';
     }
 
     function currentSamParams() {
@@ -3214,8 +3313,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const format = currentAnnotationFormat();
         const metadata = ANNOTATION_FORMATS[format];
         annotationFormatSelect.value = format;
-        loadAnnotationFileInput.accept = Object.values(ANNOTATION_FORMATS)
+        loadAnnotationFileInput.accept = [...new Set(Object.values(ANNOTATION_FORMATS)
             .map(item => item.accept)
+            .join(',')
+            .split(','))]
             .join(',');
         annotationSourceFilesInput.accept = loadAnnotationFileInput.accept;
         annotationSourceFolderInput.accept = loadAnnotationFileInput.accept;
@@ -3230,11 +3331,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (normalizedFormat === 'yolo') return `${stem}.txt`;
         if (normalizedFormat === 'voc') return `${stem}.xml`;
         if (normalizedFormat === 'coco') return `${stem}_annotations.json`;
+        if (normalizedFormat === 'csv_rich') return `${stem}_annotations_rich.csv`;
         return `${stem}_annotations.csv`;
     }
 
     function formatFromFileName(fileName) {
         const lowerName = String(fileName || '').toLowerCase();
+        if (lowerName.endsWith('_annotations_rich.csv')) return 'csv_rich';
         if (lowerName.endsWith('.csv')) return 'csv';
         if (lowerName.endsWith('.txt')) return 'yolo';
         if (lowerName.endsWith('.json')) return 'coco';
@@ -3297,6 +3400,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.sam_settings) {
             appState.projectSettings.samSettings = normalizeSamSettingsForClient(data.sam_settings);
         }
+        if (data.sam_device) {
+            appState.projectSettings.samDevice = normalizeSamDeviceForClient(data.sam_device);
+        }
         annotationDirInput.value = appState.projectSettings.annotationOutputDir;
         annotationDirDisplay.textContent = appState.projectSettings.annotationDirDisplay;
         annotationDirDisplay.title = phiSafeMode()
@@ -3305,6 +3411,7 @@ document.addEventListener('DOMContentLoaded', () => {
         annotationFormatSelect.value = appState.projectSettings.annotationFormat;
         updateAnnotationFormatUi();
         renderSamSettingsPanel();
+        renderSamDevicePanel();
         syncPreprocessSettingsInputs();
         updateAnnotationSourceDisplay();
     }
@@ -3476,6 +3583,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (annotationFormat === 'yolo') return [`${stem}.txt`, `${stem}_annotations.txt`];
         if (annotationFormat === 'coco') return [`${stem}_annotations.json`, `${stem}.json`];
         if (annotationFormat === 'voc') return [`${stem}.xml`, `${stem}_annotations.xml`];
+        if (annotationFormat === 'csv_rich') return [`${stem}_annotations_rich.csv`, `${stem}_annotations.csv`];
         return [`${stem}_annotations.csv`];
     }
 
@@ -3662,10 +3770,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const exportAnnotations = annotations
             .map(annotation => normalizeAnnotation(annotation, imageRecord))
             .filter(Boolean);
-        if (normalizedFormat === 'csv') {
+        if (normalizedFormat === 'csv' || normalizedFormat === 'csv_rich') {
             return {
-                content: buildAnnotationCsv(sourceImageName, exportAnnotations),
-                mime: ANNOTATION_FORMATS.csv.mime
+                content: buildAnnotationCsv(sourceImageName, exportAnnotations, normalizedFormat === 'csv_rich'),
+                mime: ANNOTATION_FORMATS[normalizedFormat].mime
             };
         }
         if (normalizedFormat === 'yolo') {
@@ -3775,37 +3883,47 @@ document.addEventListener('DOMContentLoaded', () => {
         return normalizeContour(contour);
     }
 
-    function buildAnnotationCsv(sourceImageName, annotations) {
-        const rows = [[
+    function buildAnnotationCsv(sourceImageName, annotations, includeMetadata = false) {
+        const header = [
             'source_image',
             'x_min',
             'y_min',
             'x_max',
             'y_max',
-            'class_label',
-            'contour',
-            'mask_area',
-            'source',
-            'predicted_iou',
-            'stability_score'
-        ]];
+            'class_label'
+        ];
+        if (includeMetadata) {
+            header.push(
+                'contour',
+                'mask_area',
+                'source',
+                'predicted_iou',
+                'stability_score'
+            );
+        }
+        const rows = [header];
 
         annotations.forEach(annotation => {
             const [x, y, w, h] = annotation.bbox.map(Math.round);
-            const metadata = annotationMaskMetadata(annotation);
-            rows.push([
+            const row = [
                 spreadsheetSafe(sourceImageName),
                 x,
                 y,
                 x + w,
                 y + h,
-                spreadsheetSafe(annotation.class),
-                metadata.contour ? JSON.stringify(metadata.contour) : '',
-                metadata.mask_area ?? '',
-                spreadsheetSafe(metadata.source || ''),
-                metadata.predicted_iou ?? '',
-                metadata.stability_score ?? ''
-            ]);
+                spreadsheetSafe(annotation.class)
+            ];
+            if (includeMetadata) {
+                const metadata = annotationMaskMetadata(annotation);
+                row.push(
+                    metadata.contour ? JSON.stringify(metadata.contour) : '',
+                    metadata.mask_area ?? '',
+                    spreadsheetSafe(metadata.source || ''),
+                    metadata.predicted_iou ?? '',
+                    metadata.stability_score ?? ''
+                );
+            }
+            rows.push(row);
         });
 
         return rows.map(row => row.map(csvEscape).join(',')).join('\n') + '\n';
@@ -3932,7 +4050,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function parseAnnotationFile(text, format, imageRecord) {
         const normalizedFormat = normalizeAnnotationFormat(format);
-        if (normalizedFormat === 'csv') return parseAnnotationCsv(text, imageNameAliases(imageRecord));
+        if (normalizedFormat === 'csv' || normalizedFormat === 'csv_rich') return parseAnnotationCsv(text, imageNameAliases(imageRecord));
         if (normalizedFormat === 'yolo') return parseAnnotationYolo(text, imageRecord);
         if (normalizedFormat === 'coco') return parseAnnotationCoco(text, imageNameAliases(imageRecord));
         if (normalizedFormat === 'voc') return parseAnnotationVoc(text);
@@ -4744,6 +4862,20 @@ document.addEventListener('DOMContentLoaded', () => {
         return count;
     }
 
+    function countCurrentImageAnnotationsWithClass(className) {
+        return currentAnnotations().filter(annotation => annotation.class === className).length;
+    }
+
+    function countOtherImageAnnotationsWithClass(className) {
+        const currentId = currentImageId();
+        let count = 0;
+        for (const [imageId, annotations] of appState.annotationsByImage.entries()) {
+            if (imageId === currentId) continue;
+            count += annotations.filter(annotation => annotation.class === className).length;
+        }
+        return count;
+    }
+
     function renameAnnotationClass(oldName, newName) {
         let changedCount = 0;
 
@@ -4765,18 +4897,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return changedCount;
     }
 
-    function deleteAnnotationsWithClass(className) {
-        let deletedCount = 0;
+    function deleteCurrentImageAnnotationsWithClass(className) {
+        const annotations = currentAnnotations();
+        const remainingAnnotations = annotations.filter(annotation => annotation.class !== className);
+        const deletedCount = annotations.length - remainingAnnotations.length;
 
-        for (const [imageId, annotations] of appState.annotationsByImage.entries()) {
-            const remainingAnnotations = annotations.filter(annotation => annotation.class !== className);
-            const removedCount = annotations.length - remainingAnnotations.length;
-            if (removedCount === 0) continue;
-
-            appState.annotationsByImage.set(imageId, remainingAnnotations);
-            appState.annotationHistoryByImage.set(imageId, []);
-            appState.dirtyImages.add(imageId);
-            deletedCount += removedCount;
+        if (deletedCount > 0) {
+            setCurrentAnnotations(remainingAnnotations);
+            setCurrentHistory([]);
+            markCurrentImageDirty();
         }
 
         appState.selectedAnnotationIds.clear();

@@ -1,6 +1,7 @@
 {
   "annotation_output_dir": "annotations",
   "annotation_format": "csv",
+  "sam_device": "auto",
   "sam_settings": {
     "preset": "cell_1920x1440",
     "params": {

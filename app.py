@@ -82,9 +82,12 @@ PHI_SAFE_MODE = _truthy_env("PHI_SAFE_MODE", False)
 PHI_HASH_SALT = os.environ.get("PHI_HASH_SALT", "")
 ALLOW_ABSOLUTE_ANNOTATION_DIR = _truthy_env("ALLOW_ABSOLUTE_ANNOTATION_DIR", False)
 SKIP_SAM_MODEL_LOAD = _truthy_env("SKIP_SAM_MODEL_LOAD", False)
+DEFAULT_SAM_DEVICE = os.environ.get("SAM_DEVICE", "auto").strip().lower() or "auto"
+SUPPORTED_SAM_DEVICES = {"auto", "cuda", "cpu"}
 DEFAULT_ANNOTATION_FORMAT = os.environ.get("ANNOTATION_FORMAT", "csv").strip().lower()
 SUPPORTED_ANNOTATION_FORMATS = {
-    "csv": {"label": "CSV", "extension": "csv"},
+    "csv": {"label": "Simple CSV", "extension": "csv"},
+    "csv_rich": {"label": "Rich CSV", "extension": "csv"},
     "yolo": {"label": "YOLO TXT", "extension": "txt"},
     "coco": {"label": "COCO JSON", "extension": "json"},
     "voc": {"label": "Pascal VOC XML", "extension": "xml"},
@@ -487,6 +490,14 @@ def _normalize_annotation_format(value):
         raise ValueError(f"annotation format must be one of: {supported}")
     return annotation_format
 
+def _normalize_sam_device(value=None):
+    default_device = DEFAULT_SAM_DEVICE if DEFAULT_SAM_DEVICE in SUPPORTED_SAM_DEVICES else "auto"
+    device = str(value or default_device).strip().lower()
+    if device not in SUPPORTED_SAM_DEVICES:
+        supported = ", ".join(sorted(SUPPORTED_SAM_DEVICES))
+        raise ValueError(f"sam_device must be one of: {supported}")
+    return device
+
 def _normalize_project_settings(raw_settings=None):
     raw_settings = raw_settings if isinstance(raw_settings, dict) else {}
     try:
@@ -503,9 +514,14 @@ def _normalize_project_settings(raw_settings=None):
         annotation_format = _normalize_annotation_format(raw_settings.get("annotation_format"))
     except ValueError:
         annotation_format = "csv"
+    try:
+        sam_device = _normalize_sam_device(raw_settings.get("sam_device"))
+    except ValueError:
+        sam_device = _normalize_sam_device()
     return {
         "annotation_output_dir": annotation_output_dir,
         "annotation_format": annotation_format,
+        "sam_device": sam_device,
         "sam_settings": {
             "preset": sam_settings["preset"],
             "params": sam_settings["params"],
@@ -547,6 +563,7 @@ def _project_settings_response():
             {"key": key, **metadata}
             for key, metadata in SUPPORTED_ANNOTATION_FORMATS.items()
         ],
+        "sam_device": sam_model_handler.status(),
         "sam_settings": sam_settings,
         "sam_presets": _sam_presets_response(),
         "privacy": {
@@ -624,6 +641,8 @@ def _annotation_file_names(image_name, image_path=None, match_mode="basename", a
 
     if annotation_format == "csv":
         return [f"{stem}_annotations.csv"]
+    if annotation_format == "csv_rich":
+        return [f"{stem}_annotations_rich.csv", f"{stem}_annotations.csv"]
     if annotation_format == "yolo":
         return [f"{stem}.txt", f"{stem}_annotations.txt"]
     if annotation_format == "coco":
@@ -1137,39 +1156,47 @@ def _read_annotation_csv(path):
                 annotations.append(annotation)
     return annotations
 
-def _write_annotation_csv(path, image_name, annotations):
+def _write_annotation_csv(path, image_name, annotations, include_metadata=False):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow([
+        header = [
             "source_image",
             "x_min",
             "y_min",
             "x_max",
             "y_max",
             "class_label",
-            "contour",
-            "mask_area",
-            "source",
-            "predicted_iou",
-            "stability_score",
-        ])
+        ]
+        if include_metadata:
+            header.extend([
+                "contour",
+                "mask_area",
+                "source",
+                "predicted_iou",
+                "stability_score",
+            ])
+        writer.writerow(header)
         for annotation in annotations:
             x, y, w, h = _normalize_bbox(annotation.get("bbox"))
-            metadata = _annotation_mask_metadata(annotation)
-            writer.writerow([
+            row = [
                 _spreadsheet_safe_cell(image_name),
                 round(x),
                 round(y),
                 round(x + w),
                 round(y + h),
                 _spreadsheet_safe_cell(_normalize_class_name(annotation.get("class"))),
-                json.dumps(metadata.get("contour", []), separators=(",", ":")) if metadata.get("contour") else "",
-                _format_number(metadata["mask_area"]) if "mask_area" in metadata else "",
-                _spreadsheet_safe_cell(metadata.get("source", "")),
-                _format_number(metadata["predicted_iou"]) if "predicted_iou" in metadata else "",
-                _format_number(metadata["stability_score"]) if "stability_score" in metadata else "",
-            ])
+            ]
+            if include_metadata:
+                metadata = _annotation_mask_metadata(annotation)
+                row.extend([
+                    json.dumps(metadata.get("contour", []), separators=(",", ":")) if metadata.get("contour") else "",
+                    _format_number(metadata["mask_area"]) if "mask_area" in metadata else "",
+                    _spreadsheet_safe_cell(metadata.get("source", "")),
+                    _format_number(metadata["predicted_iou"]) if "predicted_iou" in metadata else "",
+                    _format_number(metadata["stability_score"]) if "stability_score" in metadata else "",
+                ])
+            writer.writerow(row)
 
 def _image_size_from_values(width, height, required=False, context="annotations"):
     image_width = _parse_float(width)
@@ -1199,7 +1226,7 @@ def _format_number(value):
 
 def _count_annotation_file(path, annotation_format="csv"):
     annotation_format = _normalize_annotation_format(annotation_format)
-    if annotation_format == "csv":
+    if annotation_format in ("csv", "csv_rich"):
         return len(_read_annotation_csv(path))
     if annotation_format == "yolo":
         with open(path, "r", encoding="utf-8-sig") as file:
@@ -1476,7 +1503,7 @@ def _write_annotation_voc(path, image_name, annotations, image_size):
 def _read_annotation_file(path, annotation_format="csv", image_name="", image_size=None, classes=None):
     annotation_format = _normalize_annotation_format(annotation_format)
     classes = _normalize_classes(classes if classes is not None else _load_project_classes())
-    if annotation_format == "csv":
+    if annotation_format in ("csv", "csv_rich"):
         return _read_annotation_csv(path)
     if annotation_format == "yolo":
         return _read_annotation_yolo(path, image_size, classes)
@@ -1497,7 +1524,9 @@ def _write_annotation_file(path, image_name, annotations, annotation_format="csv
     if normalized_image_size:
         annotations, _ = _clamp_annotations_to_image(annotations, normalized_image_size)
     if annotation_format == "csv":
-        _write_annotation_csv(path, image_name, annotations)
+        _write_annotation_csv(path, image_name, annotations, include_metadata=False)
+    elif annotation_format == "csv_rich":
+        _write_annotation_csv(path, image_name, annotations, include_metadata=True)
     elif annotation_format == "yolo":
         _write_annotation_yolo(path, annotations, normalized_image_size, classes)
     elif annotation_format == "coco":
@@ -1660,61 +1689,116 @@ class SAMModelHandler:
         self.model = None
         self.cfg_path = cfg_path
         self.checkpoint_path = checkpoint_path
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.requested_device = _normalize_sam_device(_project_settings().get("sam_device"))
+        self.device = torch.device("cpu")
+        self.last_error = None
+        self._lock = threading.RLock()
         if SKIP_SAM_MODEL_LOAD:
+            try:
+                self.device = self._resolve_device(self.requested_device)
+            except Exception as e:
+                self.last_error = str(e)
+                print(f"FATAL: {self.last_error}")
             print("INFO: SKIP_SAM_MODEL_LOAD=1; SAM2 model initialization skipped.")
         else:
             self._initialize_model()
 
+    def _resolve_device(self, requested_device):
+        if requested_device == "auto":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if requested_device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested for SAM2, but CUDA is not available.")
+        return torch.device(requested_device)
+
     def _initialize_model(self):
-        if not os.path.exists(self.cfg_path):
-            print(f"FATAL: SAM2 config not found: {_display_path(self.cfg_path)}")
-            print("FATAL: Place sam2.1_hiera_l.yaml under models/ or update SAM_CONFIG_PATH.")
+        with self._lock:
             self.model = None
+            self.last_error = None
+            try:
+                self.device = self._resolve_device(self.requested_device)
+            except Exception as e:
+                self.last_error = str(e)
+                print(f"FATAL: {self.last_error}")
+                return
+
+        if not os.path.exists(self.cfg_path):
+            self.last_error = f"SAM2 config not found: {_display_path(self.cfg_path)}"
+            print(f"FATAL: {self.last_error}")
+            print("FATAL: Place sam2.1_hiera_l.yaml under models/ or update SAM_CONFIG_PATH.")
             return
         if not os.path.exists(self.checkpoint_path):
-            print(f"FATAL: SAM2 checkpoint not found: {_display_path(self.checkpoint_path)}")
+            self.last_error = f"SAM2 checkpoint not found: {_display_path(self.checkpoint_path)}"
+            print(f"FATAL: {self.last_error}")
             print("FATAL: Place sam2.1_hiera_large.pt under models/ or update SAM_CHECKPOINT_PATH.")
-            self.model = None
             return
 
         try:
             cfg = OmegaConf.load(self.cfg_path)
-            self.model = instantiate(cfg.model, _recursive_=True)
+            model = instantiate(cfg.model, _recursive_=True)
             
             state_dict = torch.load(self.checkpoint_path, map_location="cpu", weights_only=True)["model"]
-            self.model.load_state_dict(state_dict)
+            model.load_state_dict(state_dict)
             
-            self.model = self.model.to(self.device)
-            self.model.eval()
+            model = model.to(self.device)
+            model.eval()
+            with self._lock:
+                self.model = model
             
             print(f"INFO: SUCCESS: SAM2 model loaded successfully on {self.device}.")
         except Exception as e:
-            print(f"FATAL: Could not load SAM2 model. Error: {e}")
-            self.model = None
+            self.last_error = f"Could not load SAM2 model. Error: {e}"
+            print(f"FATAL: {self.last_error}")
+            with self._lock:
+                self.model = None
+
+    def set_requested_device(self, requested_device):
+        requested_device = _normalize_sam_device(requested_device)
+        if requested_device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested for SAM2, but CUDA is not available.")
+        with self._lock:
+            if requested_device == self.requested_device and self.device == self._resolve_device(requested_device):
+                return
+            self.requested_device = requested_device
+        if SKIP_SAM_MODEL_LOAD:
+            with self._lock:
+                self.device = self._resolve_device(self.requested_device)
+            return
+        self._initialize_model()
+
+    def status(self):
+        with self._lock:
+            return {
+                "mode": self.requested_device,
+                "active": str(self.device),
+                "cuda_available": torch.cuda.is_available(),
+                "ready": self.is_ready(),
+                "model_load_skipped": SKIP_SAM_MODEL_LOAD,
+                "error": self.last_error,
+            }
 
     def is_ready(self):
         return self.model is not None
 
     def generate_masks(self, image_np, sam_settings):
-        if not self.is_ready(): raise RuntimeError("SAM2 model is not initialized.")
-        params = sam_settings["params"]
-        mask_generator = SAM2AutomaticMaskGenerator(
-            model=self.model,
-            points_per_side=params["points_per_side"],
-            crop_n_layers=params["crop_n_layers"],
-            min_mask_region_area=params["min_mask_region_area"],
-            points_per_batch=params["points_per_batch"],
-            pred_iou_thresh=params["pred_iou_thresh"],
-            stability_score_thresh=params["stability_score_thresh"],
-            stability_score_offset=params["stability_score_offset"],
-            box_nms_thresh=params["box_nms_thresh"],
-            crop_nms_thresh=params["crop_nms_thresh"],
-            crop_overlap_ratio=params["crop_overlap_ratio"],
-            crop_n_points_downscale_factor=params["crop_n_points_downscale_factor"],
-            use_m2m=params["use_m2m"],
-        )
-        raw_masks = mask_generator.generate(image_np)
+        with self._lock:
+            if not self.is_ready(): raise RuntimeError("SAM2 model is not initialized.")
+            params = sam_settings["params"]
+            mask_generator = SAM2AutomaticMaskGenerator(
+                model=self.model,
+                points_per_side=params["points_per_side"],
+                crop_n_layers=params["crop_n_layers"],
+                min_mask_region_area=params["min_mask_region_area"],
+                points_per_batch=params["points_per_batch"],
+                pred_iou_thresh=params["pred_iou_thresh"],
+                stability_score_thresh=params["stability_score_thresh"],
+                stability_score_offset=params["stability_score_offset"],
+                box_nms_thresh=params["box_nms_thresh"],
+                crop_nms_thresh=params["crop_nms_thresh"],
+                crop_overlap_ratio=params["crop_overlap_ratio"],
+                crop_n_points_downscale_factor=params["crop_n_points_downscale_factor"],
+                use_m2m=params["use_m2m"],
+            )
+            raw_masks = mask_generator.generate(image_np)
         filtered_masks = []
         min_area, max_area = _effective_filter_areas(image_np, params)
         for mask_data in raw_masks:
@@ -1902,6 +1986,17 @@ def project_settings_endpoint():
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
+    device_changed = False
+    if "sam_device" in data:
+        try:
+            sam_device = _normalize_sam_device(data.get("sam_device"))
+            if sam_device == "cuda" and not torch.cuda.is_available():
+                return jsonify({"error": "CUDA was requested for SAM2, but CUDA is not available."}), 400
+            device_changed = sam_device != _normalize_sam_device(next_settings.get("sam_device"))
+            next_settings["sam_device"] = sam_device
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
     if "sam_settings" in data:
         try:
             sam_settings = _normalize_sam_settings(data.get("sam_settings"))
@@ -1914,6 +2009,8 @@ def project_settings_endpoint():
 
     try:
         PROJECT_SETTINGS = _save_project_settings(next_settings)
+        if device_changed:
+            sam_model_handler.set_requested_device(PROJECT_SETTINGS["sam_device"])
         os.makedirs(_annotation_dir(), exist_ok=True)
         return jsonify(_project_settings_response())
     except Exception as e:

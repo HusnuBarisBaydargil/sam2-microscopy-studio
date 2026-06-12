@@ -285,6 +285,37 @@ body {
     font-size: 0.8em;
 }
 
+.sam-device-row {
+    display: grid;
+    grid-template-columns: auto minmax(76px, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.sam-device-row label {
+    color: var(--text-muted);
+    font-size: 0.78em;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.sam-device-status {
+    min-width: 78px;
+    color: var(--text-muted);
+    font-size: 0.78em;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.sam-device-status.warning {
+    color: var(--warning-color);
+}
+
+.sam-device-status.ready {
+    color: var(--accept-color);
+}
+
 #samPresetSummary {
     min-width: 0;
     color: var(--text-color);

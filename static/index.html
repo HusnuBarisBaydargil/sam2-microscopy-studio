@@ -73,7 +73,8 @@
                     <div class="form-group">
                         <label for="annotationFormatSelect">Annotation format</label>
                         <select id="annotationFormatSelect" class="form-control">
-                            <option value="csv">CSV</option>
+                            <option value="csv">Simple CSV</option>
+                            <option value="csv_rich">Rich CSV</option>
                             <option value="yolo">YOLO TXT</option>
                             <option value="coco">COCO JSON</option>
                             <option value="voc">Pascal VOC XML</option>
@@ -94,6 +95,15 @@
                         <button id="openSamSettingsBtn" class="btn btn-secondary sam-expert-btn" type="button">Expert Settings</button>
                     </div>
                     <select id="samPresetSelect" class="form-control"></select>
+                    <div class="sam-device-row">
+                        <label for="samDeviceSelect">Device</label>
+                        <select id="samDeviceSelect" class="form-control">
+                            <option value="auto">Auto</option>
+                            <option value="cuda">CUDA</option>
+                            <option value="cpu">CPU</option>
+                        </select>
+                        <span id="samDeviceStatus" class="sam-device-status">Auto</span>
+                    </div>
                     <div class="sam-preset-meta">
                         <span>Active preset</span>
                         <span id="samPresetSummary">Cell 1920x1440</span>
