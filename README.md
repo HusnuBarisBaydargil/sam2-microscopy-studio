@@ -175,7 +175,7 @@ Environment variables:
 - `PHI_SAFE_MODE`: set to `1` to hide image filenames, folder paths, annotation paths, and saved export image names behind generated IDs.
 - `PHI_HASH_SALT`: optional secret salt for stable PHI-safe image IDs.
 - `ANNOTATION_OUTPUT_DIR`: default annotation folder. Defaults to `annotations`.
-- `ANNOTATION_FORMAT`: default annotation format: `csv`, `yolo`, `coco`, or `voc`.
+- `ANNOTATION_FORMAT`: default annotation format: `csv`, `csv_rich`, `yolo`, `coco`, or `voc`. `csv` writes simple box labels; `csv_rich` preserves SAM2 metadata.
 - `PROJECT_SETTINGS_FILE`: runtime project settings file. Defaults to `project_settings.json`.
 - `ALLOWED_CORS_ORIGINS`: comma-separated allowed origins.
 - `MAX_UPLOAD_MB`: request size limit in MB.
@@ -183,6 +183,7 @@ Environment variables:
 - `SAM_MAX_CONCURRENT_REQUESTS`: maximum concurrent SAM2 inference jobs. Defaults to `1`.
 - `SAM_QUEUE_TIMEOUT_SECONDS`: seconds a SAM2 request can wait for an inference slot. Defaults to `5`.
 - `SAM_INFERENCE_TIMEOUT_SECONDS`: seconds a SAM2 request can wait for inference to finish before timeout. Defaults to `300`.
+- `SAM_DEVICE`: SAM2 device preference: `auto`, `cuda`, or `cpu`. Defaults to `auto`.
 - `MAX_ANNOTATIONS_PER_SAVE`: maximum annotations accepted in one save request.
 - `MAX_CLASSES_PER_PROJECT`: maximum project classes.
 - `ALLOW_ABSOLUTE_ANNOTATION_DIR`: set to `1` only if absolute annotation paths are required.
