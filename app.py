@@ -8,11 +8,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import cv2
-import numpy as np
 import torch
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from PIL import Image
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
@@ -28,6 +26,12 @@ from annotation_io import (
     _parse_float,
     _read_annotation_file,
     _write_annotation_file,
+)
+from image_io import (
+    ALLOWED_IMAGE_EXTENSIONS,
+    _decode_cv2_bgr_image,
+    _decode_pil_rgb_image,
+    _validate_uploaded_image_file,
 )
 from preprocessing import (
     PREPROCESS_METHODS,
@@ -81,7 +85,6 @@ app = Flask(__name__, static_folder='static')
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 MAX_UPLOAD_MB = _positive_int_env("MAX_UPLOAD_MB", 64)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
-MAX_DECODED_IMAGE_PIXELS = _positive_int_env("MAX_DECODED_IMAGE_PIXELS", 25_000_000)
 SAM_MAX_CONCURRENT_REQUESTS = _positive_int_env("SAM_MAX_CONCURRENT_REQUESTS", 1)
 SAM_QUEUE_TIMEOUT_SECONDS = _positive_float_env("SAM_QUEUE_TIMEOUT_SECONDS", 5.0)
 SAM_INFERENCE_TIMEOUT_SECONDS = _positive_float_env("SAM_INFERENCE_TIMEOUT_SECONDS", 300.0)
@@ -90,9 +93,6 @@ ALLOWED_CORS_ORIGINS = _csv_env(
     ["http://127.0.0.1:5000", "http://localhost:5000"],
 )
 CORS(app, resources={r"/api/*": {"origins": ALLOWED_CORS_ORIGINS}})
-ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/bmp", "image/x-ms-bmp", "image/tiff", "image/x-tiff"}
-ALLOWED_PIL_IMAGE_FORMATS = {"JPEG", "PNG", "BMP", "TIFF"}
 
 SAM_CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, "models", "sam2.1_hiera_large.pt")
 SAM_CONFIG_PATH = os.path.join(PROJECT_ROOT, "models", "sam2.1_hiera_l.yaml")
@@ -108,66 +108,6 @@ DEFAULT_ANNOTATION_FORMAT = os.environ.get("ANNOTATION_FORMAT", "csv").strip().l
 PROJECT_SETTINGS = None
 SAM_INFERENCE_SEMAPHORE = threading.BoundedSemaphore(SAM_MAX_CONCURRENT_REQUESTS)
 SAM_INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=SAM_MAX_CONCURRENT_REQUESTS)
-
-
-def _uploaded_image_extension(file_storage):
-    filename = secure_filename(file_storage.filename or "")
-    return os.path.splitext(filename)[1].lower()
-
-
-def _validate_uploaded_image_file(file_storage):
-    extension = _uploaded_image_extension(file_storage)
-    if extension not in ALLOWED_IMAGE_EXTENSIONS:
-        allowed = ", ".join(sorted(ALLOWED_IMAGE_EXTENSIONS))
-        raise ValueError(f"unsupported image extension; allowed extensions are: {allowed}")
-
-    mimetype = (file_storage.mimetype or "").lower()
-    if mimetype and mimetype != "application/octet-stream" and mimetype not in ALLOWED_IMAGE_MIME_TYPES:
-        allowed = ", ".join(sorted(ALLOWED_IMAGE_MIME_TYPES))
-        raise ValueError(f"unsupported image MIME type; allowed MIME types are: {allowed}")
-
-
-def _decoded_pixel_count(width, height):
-    try:
-        width = int(width)
-        height = int(height)
-    except (TypeError, ValueError):
-        raise ValueError("image dimensions must be numeric")
-    if width <= 0 or height <= 0:
-        raise ValueError("image dimensions must be positive")
-    return width * height
-
-
-def _validate_decoded_image_size(width, height, context="image"):
-    pixel_count = _decoded_pixel_count(width, height)
-    if pixel_count > MAX_DECODED_IMAGE_PIXELS:
-        raise ValueError(
-            f"{context} has {pixel_count} decoded pixels; limit is {MAX_DECODED_IMAGE_PIXELS}."
-        )
-
-
-def _inspect_encoded_image_size(image_bytes, context="image"):
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as image:
-            if image.format not in ALLOWED_PIL_IMAGE_FORMATS:
-                allowed = ", ".join(sorted(ALLOWED_PIL_IMAGE_FORMATS))
-                raise ValueError(f"{context} format must be one of: {allowed}")
-            _validate_decoded_image_size(image.width, image.height, context=context)
-    except ValueError:
-        raise
-    except Exception:
-        return
-
-
-def _decode_cv2_bgr_image(image_bytes, context="image"):
-    _inspect_encoded_image_size(image_bytes, context=context)
-    image_array = np.frombuffer(image_bytes, np.uint8)
-    bgr_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-    if bgr_image is None:
-        raise ValueError("Failed to decode image")
-    height, width = bgr_image.shape[:2]
-    _validate_decoded_image_size(width, height, context=context)
-    return bgr_image
 
 
 def _run_sam_inference_with_limits(rgb_image, sam_settings):
@@ -611,12 +551,7 @@ def load_image_endpoint():
     try:
         _validate_uploaded_image_file(file)
         image_stream = file.read()
-        with Image.open(io.BytesIO(image_stream)) as source_image:
-            if source_image.format not in ALLOWED_PIL_IMAGE_FORMATS:
-                allowed = ", ".join(sorted(ALLOWED_PIL_IMAGE_FORMATS))
-                raise ValueError(f"image format must be one of: {allowed}")
-            _validate_decoded_image_size(source_image.width, source_image.height, context="image")
-            image = source_image.convert("RGB")
+        image = _decode_pil_rgb_image(image_stream, context="image")
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         encoded_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
