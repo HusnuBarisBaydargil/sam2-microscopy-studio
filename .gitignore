@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 pytest_workspace_tmp/
+pytest_tmp*/
 .ruff_cache/
 .coverage
 htmlcov/

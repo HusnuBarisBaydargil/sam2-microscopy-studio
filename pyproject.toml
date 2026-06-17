@@ -1,6 +1,6 @@
 [tool.ruff]
 target-version = "py312"
-extend-exclude = ["sam2"]
+extend-exclude = [".tmp", "pytest_tmp*", "pytest_workspace_tmp", "sam2"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

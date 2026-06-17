@@ -26,6 +26,7 @@ env/
 requirements-dev.txt
 tests/
 pytest_workspace_tmp/
+pytest_tmp*/
 pytest-cache-files-*/
 
 # Runtime state and generated outputs
