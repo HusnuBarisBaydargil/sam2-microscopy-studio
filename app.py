@@ -1,26 +1,27 @@
-import os
+import base64
 import csv
+import hashlib
+import hmac
+import io
 import json
+import os
+import re
+import threading
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from xml.sax.saxutils import escape as xml_escape
+
 import cv2
 import numpy as np
-import re
-import hmac
-import hashlib
-import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-from PIL import Image
-import io
-import base64
 import torch
-import xml.etree.ElementTree as ET
-from xml.sax.saxutils import escape as xml_escape
-from werkzeug.utils import secure_filename
-from werkzeug.exceptions import RequestEntityTooLarge
-
-from omegaconf import OmegaConf
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 from hydra.utils import instantiate
+from omegaconf import OmegaConf
+from PIL import Image
+from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import secure_filename
+
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 
 
@@ -1938,7 +1939,7 @@ def _preprocess_endpoint_response(method, raw_params):
         })
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    except Exception as e:
+    except Exception:
         return jsonify({"error": "Failed to process image"}), 500
 
 @app.route("/api/classes", methods=["GET", "POST"])

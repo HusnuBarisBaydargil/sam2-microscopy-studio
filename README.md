@@ -54,7 +54,7 @@ SAM2 resources:
 - Official GitHub repository: [facebookresearch/sam2](https://github.com/facebookresearch/sam2)
 - SAM2.1 large checkpoint: [sam2.1_hiera_large.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt)
 
-The checkpoint file is intentionally not included in this repository because it is large. Download it from the official SAM2 checkpoint link above and place it here:
+Model checkpoint files are intentionally not committed to this repository because they are large binary artifacts. For local non-Docker runs, download the official SAM2 checkpoint link above and place it here:
 
 ```text
 models/sam2.1_hiera_large.pt
@@ -149,10 +149,24 @@ pytest --basetemp pytest_workspace_tmp\run -p no:cacheprovider
 
 ## Docker
 
-The Docker image intentionally excludes model checkpoints and runtime annotation data. Mount those directories at runtime:
+Local checkpoint files remain excluded from the Docker build context by `.dockerignore`, so model checkpoints are not committed and are not copied from your workstation into the image. Instead, the Docker build installs a minimal download tool and downloads the SAM2.1 large checkpoint automatically into:
+
+```text
+/app/models/sam2.1_hiera_large.pt
+```
+
+Build an image with the checkpoint baked in:
 
 ```powershell
 docker build -t sam2-annotator .
+docker run --rm -p 5000:5000 `
+  -v ${PWD}\annotations:/app/annotations `
+  sam2-annotator
+```
+
+If you do not want the checkpoint baked into the runtime container, you can mount a local `models/` directory instead. A bind mount at `/app/models` takes precedence over the checkpoint downloaded during build, so make sure the mounted directory contains both `sam2.1_hiera_l.yaml` and `sam2.1_hiera_large.pt`:
+
+```powershell
 docker run --rm -p 5000:5000 `
   -v ${PWD}\models:/app/models `
   -v ${PWD}\annotations:/app/annotations `
@@ -241,7 +255,7 @@ Supported preprocessing methods include CLAHE, gamma, CLAHE plus unsharp, gamma 
 ## Troubleshooting
 
 - If SAM2 is unavailable, confirm both model files exist and run `python scripts/check_setup.py`.
-- If Docker starts but SAM2 cannot run, confirm the `models` volume is mounted.
+- If Docker starts but SAM2 cannot run, confirm the build downloaded `/app/models/sam2.1_hiera_large.pt`; if mounting `models/`, confirm the mounted directory contains both the config and checkpoint.
 - If YOLO import fails, load the image first so the browser can provide image width and height.
 - If duplicate image names are used in a folder, use path-specific saves or keep filenames unique.
 - If pytest fails on Windows temp permissions, run with `--basetemp` pointed at a writable workspace folder.

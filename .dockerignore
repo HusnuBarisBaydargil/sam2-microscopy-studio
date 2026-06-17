@@ -1,0 +1,48 @@
+# Git and editor metadata
+.git
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python build, cache, and virtualenv artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Test/development-only files
+requirements-dev.txt
+tests/
+pytest_workspace_tmp/
+pytest-cache-files-*/
+
+# Runtime state and generated outputs
+annotations/
+project_settings.json
+project_classes.json
+.tmp/
+*.log
+
+# Large local model/checkpoint files; mount models at runtime instead
+models/*.pt
+models/*.pth
+models/*.ckpt
+*.pt
+*.pth
+*.ckpt
+
+# Local notebooks and exploratory artifacts
+.ipynb_checkpoints/
+*.ipynb
