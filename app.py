@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import cv2
 import torch
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Blueprint, Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -113,6 +113,15 @@ ALLOWED_CORS_ORIGINS = _csv_env(
     ["http://127.0.0.1:5000", "http://localhost:5000"],
 )
 CORS(app, resources={r"/api/*": {"origins": ALLOWED_CORS_ORIGINS}})
+
+main_bp = Blueprint("main", __name__)
+auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+image_bp = Blueprint("image_api", __name__, url_prefix="/api")
+preprocess_bp = Blueprint("preprocess_api", __name__, url_prefix="/api")
+classes_bp = Blueprint("classes_api", __name__, url_prefix="/api")
+project_bp = Blueprint("project_api", __name__, url_prefix="/api/project")
+annotations_bp = Blueprint("annotations_api", __name__, url_prefix="/api/annotations")
+sam_bp = Blueprint("sam_api", __name__, url_prefix="/api")
 
 SAM_CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, "models", "sam2.1_hiera_large.pt")
 SAM_CONFIG_PATH = os.path.join(PROJECT_ROOT, "models", "sam2.1_hiera_l.yaml")
@@ -346,7 +355,7 @@ sam_model_handler = SAMModelHandler(
     display_path=_display_path,
 )
 
-@app.route("/")
+@main_bp.route("/")
 def serve_index():
     return send_from_directory(app.static_folder, 'index.html')
 
@@ -367,7 +376,7 @@ def require_api_token():
     }), 401
 
 
-@app.route("/api/auth/status", methods=["GET"])
+@auth_bp.route("/status", methods=["GET"])
 def auth_status_endpoint():
     return jsonify({"auth_required": bool(API_AUTH_TOKEN)})
 
@@ -376,7 +385,7 @@ def auth_status_endpoint():
 def handle_request_too_large(error):
     return jsonify({"error": f"Request body is too large. Limit is {MAX_UPLOAD_MB} MB."}), 413
 
-@app.route("/api/load_image", methods=["POST"])
+@image_bp.route("/load_image", methods=["POST"])
 def load_image_endpoint():
     if 'image' not in request.files: return jsonify({"error": "No image file provided"}), 400
     file = request.files['image']
@@ -391,11 +400,11 @@ def load_image_endpoint():
     except Exception as e:
         return jsonify({"error": f"Failed to decode image file: {e}"}), 400
 
-@app.route("/api/clahe", methods=["POST"])
+@preprocess_bp.route("/clahe", methods=["POST"])
 def apply_clahe_endpoint():
     return _preprocess_endpoint_response("clahe", {})
 
-@app.route("/api/preprocess", methods=["POST"])
+@preprocess_bp.route("/preprocess", methods=["POST"])
 def apply_preprocess_endpoint():
     raw_params = {}
     if request.form.get("params"):
@@ -431,7 +440,7 @@ def _preprocess_endpoint_response(method, raw_params):
     except Exception:
         return jsonify({"error": "Failed to process image"}), 500
 
-@app.route("/api/classes", methods=["GET", "POST"])
+@classes_bp.route("/classes", methods=["GET", "POST"])
 def load_classes_endpoint():
     if request.method == "GET":
         return jsonify({
@@ -450,7 +459,7 @@ def load_classes_endpoint():
     except Exception as e:
         return jsonify({"error": f"Failed to save project classes: {e}"}), 500
 
-@app.route("/api/project/settings", methods=["GET", "POST"])
+@project_bp.route("/settings", methods=["GET", "POST"])
 def project_settings_endpoint():
     global PROJECT_SETTINGS
 
@@ -506,7 +515,7 @@ def project_settings_endpoint():
     except Exception as e:
         return jsonify({"error": f"Failed to update project settings: {e}"}), 500
 
-@app.route("/api/annotations/match", methods=["POST"])
+@annotations_bp.route("/match", methods=["POST"])
 def match_annotations_endpoint():
     data = request.get_json(silent=True) or {}
     try:
@@ -533,7 +542,7 @@ def match_annotations_endpoint():
         "summary": summary,
     })
 
-@app.route("/api/annotations/bulk_load", methods=["POST"])
+@annotations_bp.route("/bulk_load", methods=["POST"])
 def bulk_load_annotations_endpoint():
     data = request.get_json(silent=True) or {}
     try:
@@ -598,7 +607,7 @@ def bulk_load_annotations_endpoint():
         "summary": summary,
     })
 
-@app.route("/api/annotations/load", methods=["GET"])
+@annotations_bp.route("/load", methods=["GET"])
 def load_annotations_endpoint():
     image_name = request.args.get("image_name", "").strip()
     image_path = request.args.get("image_path", "").strip()
@@ -679,7 +688,7 @@ def load_annotations_endpoint():
     except Exception as e:
         return jsonify({"error": f"Failed to load annotations: {e}"}), 500
 
-@app.route("/api/annotations/save", methods=["POST"])
+@annotations_bp.route("/save", methods=["POST"])
 def save_annotations_endpoint():
     data = request.get_json(silent=True) or {}
     image_name = str(data.get("image_name", "")).strip()
@@ -740,7 +749,7 @@ def save_annotations_endpoint():
     except Exception as e:
         return jsonify({"error": f"Failed to save annotations: {e}"}), 500
 
-@app.route("/api/run_sam", methods=["POST"])
+@sam_bp.route("/run_sam", methods=["POST"])
 def run_sam_endpoint():
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
@@ -776,6 +785,23 @@ def run_sam_endpoint():
     except Exception as e:
         print(f"Error during SAM processing: {e}")
         return jsonify({"error": f"Failed to run SAM model: {e}"}), 500
+
+
+def _register_blueprints(flask_app):
+    for blueprint in (
+        main_bp,
+        auth_bp,
+        image_bp,
+        preprocess_bp,
+        classes_bp,
+        project_bp,
+        annotations_bp,
+        sam_bp,
+    ):
+        flask_app.register_blueprint(blueprint)
+
+
+_register_blueprints(app)
 
 if __name__ == "__main__":
     app.run(
