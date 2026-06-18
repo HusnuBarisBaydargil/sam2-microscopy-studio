@@ -48,6 +48,7 @@ from sam_service import (
     normalize_sam_settings,
     sam_presets_response,
 )
+from security import apply_security_headers, is_authorized_api_request
 
 
 def _truthy_env(name, default=False):
@@ -490,43 +491,12 @@ def serve_index():
 
 @app.after_request
 def add_security_headers(response):
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault(
-        "Content-Security-Policy",
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self'; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "font-src 'self'; "
-        "base-uri 'self'; "
-        "frame-ancestors 'self'"
-    )
-    return response
-
-
-def _request_api_token():
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip()
-    return request.headers.get("X-API-Token", "").strip()
+    return apply_security_headers(response)
 
 
 @app.before_request
 def require_api_token():
-    if not API_AUTH_TOKEN:
-        return None
-    if request.method == "OPTIONS":
-        return None
-    if not request.path.startswith("/api/"):
-        return None
-    if request.path == "/api/auth/status":
-        return None
-
-    supplied_token = _request_api_token()
-    if supplied_token and hmac.compare_digest(supplied_token, API_AUTH_TOKEN):
+    if is_authorized_api_request(request, API_AUTH_TOKEN):
         return None
 
     return jsonify({
