@@ -1,6 +1,4 @@
 import base64
-import hashlib
-import hmac
 import io
 import json
 import os
@@ -12,20 +10,34 @@ import torch
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
-from werkzeug.utils import secure_filename
 
 from annotation_io import (
     SUPPORTED_ANNOTATION_FORMATS,
     _clamp_annotations_to_image,
     _classes_with_annotation_labels,
-    _count_annotation_file,
     _image_size_from_values,
     _normalize_annotation_format,
     _normalize_annotations_payload,
     _normalize_classes,
-    _parse_float,
     _read_annotation_file,
     _write_annotation_file,
+)
+from annotation_paths import (
+    annotation_candidate_paths,
+    annotation_file_name,
+    annotation_file_names,
+    annotation_path_for_image,
+    count_annotations_safe,
+    duplicate_stems_for_images,
+    image_info_from_payload,
+    load_project_classes,
+    project_classes_path,
+    public_annotation_path,
+    public_image_name,
+    resolve_annotation_match,
+    safe_image_stem,
+    safe_path_stem,
+    save_project_classes,
 )
 from image_io import (
     ALLOWED_IMAGE_EXTENSIONS,
@@ -216,49 +228,24 @@ def _project_settings_response():
     }
 
 def _safe_image_stem(image_name):
-    safe_name = secure_filename(os.path.basename(image_name or "image"))
-    stem, _ = os.path.splitext(safe_name)
-    return stem or "image"
+    return safe_image_stem(image_name)
 
 def _safe_path_stem(image_path):
-    normalized_path = str(image_path or "").replace("\\", "/")
-    parts = [secure_filename(part) for part in normalized_path.split("/") if part]
-    if not parts:
-        return _safe_image_stem(image_path)
-
-    stem_parts = []
-    for index, part in enumerate(parts):
-        stem = os.path.splitext(part)[0] if index == len(parts) - 1 else part
-        if stem:
-            stem_parts.append(stem)
-
-    return "__".join(stem_parts) or _safe_image_stem(image_path)
-
-
-def _anonymized_image_stem(image_name, image_path=None):
-    identity = str(image_path or image_name or "image").replace("\\", "/").strip().lower()
-    key = PHI_HASH_SALT.encode("utf-8")
-    digest_source = identity.encode("utf-8")
-    if key:
-        digest = hmac.new(key, digest_source, hashlib.sha256).hexdigest()
-    else:
-        digest = hashlib.sha256(digest_source).hexdigest()
-    return f"image_{digest[:16]}"
+    return safe_path_stem(image_path)
 
 
 def _public_image_name(image_name, image_path=None):
-    if not PHI_SAFE_MODE:
-        return image_name
-    extension = os.path.splitext(secure_filename(os.path.basename(image_name or "")))[1].lower()
-    if extension not in ALLOWED_IMAGE_EXTENSIONS:
-        extension = ""
-    return f"{_anonymized_image_stem(image_name, image_path)}{extension}"
+    return public_image_name(
+        image_name,
+        image_path,
+        phi_safe_mode=PHI_SAFE_MODE,
+        phi_hash_salt=PHI_HASH_SALT,
+        allowed_image_extensions=ALLOWED_IMAGE_EXTENSIONS,
+    )
 
 
 def _public_annotation_path(path):
-    if not PHI_SAFE_MODE:
-        return _display_path(path)
-    return os.path.basename(path).replace(os.sep, "/")
+    return public_annotation_path(path, phi_safe_mode=PHI_SAFE_MODE, display_path=_display_path)
 
 
 def _public_annotation_dir_display(path):
@@ -274,61 +261,48 @@ def _public_settings_path(path):
 
 
 def _annotation_file_names(image_name, image_path=None, match_mode="basename", annotation_format="csv"):
-    annotation_format = _normalize_annotation_format(annotation_format)
-    if PHI_SAFE_MODE:
-        stem = _anonymized_image_stem(image_name, image_path if match_mode == "path" else image_name)
-    elif match_mode == "path" and image_path:
-        stem = _safe_path_stem(image_path)
-    else:
-        stem = _safe_image_stem(image_name)
-
-    if annotation_format == "csv":
-        return [f"{stem}_annotations.csv"]
-    if annotation_format == "csv_rich":
-        return [f"{stem}_annotations_rich.csv", f"{stem}_annotations.csv"]
-    if annotation_format == "yolo":
-        return [f"{stem}.txt", f"{stem}_annotations.txt"]
-    if annotation_format == "coco":
-        return [f"{stem}_annotations.json", f"{stem}.json"]
-    if annotation_format == "voc":
-        return [f"{stem}.xml", f"{stem}_annotations.xml"]
-    return [f"{stem}_annotations.csv"]
+    return annotation_file_names(
+        image_name,
+        image_path,
+        match_mode,
+        annotation_format,
+        phi_safe_mode=PHI_SAFE_MODE,
+        phi_hash_salt=PHI_HASH_SALT,
+    )
 
 def _annotation_file_name(image_name, image_path=None, match_mode="basename", annotation_format="csv"):
-    return _annotation_file_names(image_name, image_path, match_mode, annotation_format)[0]
+    return annotation_file_name(
+        image_name,
+        image_path,
+        match_mode,
+        annotation_format,
+        phi_safe_mode=PHI_SAFE_MODE,
+        phi_hash_salt=PHI_HASH_SALT,
+    )
 
 def _annotation_path_for_image(image_name, image_path=None, match_mode="basename", annotation_format="csv"):
-    file_name = _annotation_file_name(image_name, image_path, match_mode, annotation_format)
-    return os.path.join(_annotation_dir(), file_name)
+    return annotation_path_for_image(
+        image_name,
+        image_path,
+        match_mode,
+        annotation_format,
+        annotation_dir=_annotation_dir(),
+        phi_safe_mode=PHI_SAFE_MODE,
+        phi_hash_salt=PHI_HASH_SALT,
+    )
 
 def _annotation_candidate_paths(image_name, image_path=None, annotation_format="csv"):
-    candidates = []
-    if image_path and str(image_path) != str(image_name):
-        for file_name in _annotation_file_names(image_name, image_path, "path", annotation_format):
-            candidates.append({
-                "match_mode": "path",
-                "format": annotation_format,
-                "path": os.path.join(_annotation_dir(), file_name),
-            })
-    for file_name in _annotation_file_names(image_name, image_path, "basename", annotation_format):
-        candidates.append({
-            "match_mode": "basename",
-            "format": annotation_format,
-            "path": os.path.join(_annotation_dir(), file_name),
-        })
-
-    unique = []
-    seen_paths = set()
-    for candidate in candidates:
-        normalized_path = os.path.abspath(candidate["path"])
-        if normalized_path in seen_paths:
-            continue
-        seen_paths.add(normalized_path)
-        unique.append(candidate)
-    return unique
+    return annotation_candidate_paths(
+        image_name,
+        image_path,
+        annotation_format,
+        annotation_dir=_annotation_dir(),
+        phi_safe_mode=PHI_SAFE_MODE,
+        phi_hash_salt=PHI_HASH_SALT,
+    )
 
 def _project_classes_path():
-    return os.path.join(_annotation_dir(), PROJECT_CLASSES_FILE)
+    return project_classes_path(_annotation_dir(), PROJECT_CLASSES_FILE)
 
 def _display_path(path):
     try:
@@ -337,110 +311,32 @@ def _display_path(path):
         return os.path.abspath(path).replace(os.sep, "/")
 
 def _image_info_from_payload(raw_image):
-    raw_image = raw_image if isinstance(raw_image, dict) else {}
-    name = str(raw_image.get("name", "")).strip()
-    display_path = str(raw_image.get("display_path") or name).strip()
-    width = _parse_float(raw_image.get("width"))
-    height = _parse_float(raw_image.get("height"))
-    return {
-        "id": str(raw_image.get("id") or display_path or name).strip(),
-        "name": name,
-        "display_path": display_path,
-        "width": width,
-        "height": height,
-    }
+    return image_info_from_payload(raw_image)
 
 def _duplicate_stems_for_images(images):
-    counts = {}
-    for image in images:
-        stem = _safe_image_stem(image.get("name"))
-        counts[stem] = counts.get(stem, 0) + 1
-    return {stem for stem, count in counts.items() if count > 1}
+    return duplicate_stems_for_images(images)
 
 def _count_annotations_safe(path, annotation_format="csv"):
-    try:
-        return _count_annotation_file(path, annotation_format)
-    except Exception:
-        return None
-
-def _first_candidate(candidates, match_mode, must_exist=False):
-    for candidate in candidates:
-        if candidate["match_mode"] != match_mode:
-            continue
-        if must_exist and not os.path.exists(candidate["path"]):
-            continue
-        return candidate
-    return None
+    return count_annotations_safe(path, annotation_format)
 
 def _resolve_annotation_match(image_info, duplicate_stems=None, annotation_format=None):
-    annotation_format = _normalize_annotation_format(annotation_format or _project_settings().get("annotation_format"))
-    duplicate_stems = duplicate_stems or set()
-    image_name = image_info.get("name", "")
-    image_path = image_info.get("display_path") or image_name
-    image_stem = _safe_image_stem(image_name)
-    is_duplicate_name = image_stem in duplicate_stems
-    candidates = _annotation_candidate_paths(image_name, image_path, annotation_format)
-    path_candidate = _first_candidate(candidates, "path")
-    base_candidate = _first_candidate(candidates, "basename")
-    path_match = _first_candidate(candidates, "path", must_exist=True)
-    base_match = _first_candidate(candidates, "basename", must_exist=True)
-
-    if is_duplicate_name:
-        if path_match:
-            chosen = path_match
-            status = "matched"
-            message = "Matched by image folder path."
-        elif base_match:
-            chosen = base_match
-            status = "ambiguous"
-            message = "Duplicate image name; basename annotation file could match more than one image."
-        else:
-            chosen = path_candidate or base_candidate
-            status = "missing"
-            message = "No matching annotation file found."
-    elif base_match:
-        chosen = base_match
-        status = "matched"
-        message = "Matched by image name."
-    elif path_match:
-        chosen = path_match
-        status = "matched"
-        message = "Matched by image folder path."
-    else:
-        chosen = base_candidate or path_candidate
-        status = "missing"
-        message = "No matching annotation file found."
-
-    path = chosen["path"] if chosen else _annotation_path_for_image(image_name, image_path, annotation_format=annotation_format)
-    return {
-        "id": image_info.get("id"),
-        "name": _public_image_name(image_name, image_path),
-        "display_path": _public_image_name(image_name, image_path),
-        "format": annotation_format,
-        "status": status,
-        "exists": status == "matched",
-        "ambiguous": status == "ambiguous",
-        "match_mode": chosen["match_mode"] if chosen else "basename",
-        "path": _public_annotation_path(path),
-        "annotation_count": _count_annotations_safe(path, annotation_format) if status == "matched" else 0,
-        "message": message,
-    }
+    return resolve_annotation_match(
+        image_info,
+        duplicate_stems,
+        annotation_format,
+        default_annotation_format=_project_settings().get("annotation_format"),
+        annotation_dir=_annotation_dir(),
+        phi_safe_mode=PHI_SAFE_MODE,
+        phi_hash_salt=PHI_HASH_SALT,
+        allowed_image_extensions=ALLOWED_IMAGE_EXTENSIONS,
+        display_path=_display_path,
+    )
 
 def _save_project_classes(classes):
-    os.makedirs(_annotation_dir(), exist_ok=True)
-    with open(_project_classes_path(), "w", encoding="utf-8") as file:
-        json.dump({"classes": _normalize_classes(classes)}, file, indent=2)
+    save_project_classes(classes, _project_classes_path())
 
 def _load_project_classes():
-    path = _project_classes_path()
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as file:
-            data = json.load(file)
-        return _normalize_classes(data.get("classes"))
-    except Exception:
-        return []
+    return load_project_classes(_project_classes_path())
 
 sam_model_handler = SAMModelHandler(
     SAM_CONFIG_PATH,
