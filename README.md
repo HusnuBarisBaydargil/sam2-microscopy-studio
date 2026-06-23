@@ -75,7 +75,7 @@ models/
   sam2.1_hiera_large.pt
 ```
 
-If you use this annotator in research or publish results produced with SAM2, cite the SAM2 paper:
+If this annotator or SAM2-assisted outputs are useful in your research, please consider citing the SAM2 paper:
 
 ```bibtex
 @article{ravi2024sam2,
