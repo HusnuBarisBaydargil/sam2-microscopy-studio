@@ -145,8 +145,24 @@ def test_project_settings_client_exports_expected_normalization_behavior():
         });
         assert.strictEqual(settings.samDeviceLabel(device), 'Auto -> CUDA');
         assert.strictEqual(settings.samDeviceTitle(device), 'SAM2 is running with CUDA acceleration.');
+        assert.deepStrictEqual(plain(settings.samDeviceReadiness(device)), {
+            level: 'ready',
+            text: 'SAM2 is ready with CUDA acceleration.'
+        });
         assert.strictEqual(settings.samDeviceLabel({ ...device, error: 'boom' }), 'Needs attention');
         assert.strictEqual(settings.samDeviceTitle({ ...device, error: 'boom' }), 'boom');
+        assert.deepStrictEqual(plain(settings.samDeviceReadiness({ ...device, error: 'boom' })), {
+            level: 'error',
+            text: 'SAM2 needs attention: boom'
+        });
+        assert.deepStrictEqual(plain(settings.samDeviceReadiness({ ...device, active: 'cpu', ready: true })), {
+            level: 'warning',
+            text: 'SAM2 is ready but running on CPU. Candidate generation may be slow.'
+        });
+        assert.deepStrictEqual(plain(settings.samDeviceReadiness({ ...device, modelLoadSkipped: true, ready: false })), {
+            level: 'error',
+            text: 'SAM2 candidate generation is unavailable in this session.'
+        });
 
         const riskWarnings = settings.samRiskWarnings(
             {

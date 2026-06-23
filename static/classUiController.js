@@ -63,15 +63,25 @@
             hotkeyInput.maxLength = 1;
             hotkeyInput.title = 'Optional keyboard shortcut';
 
+            const hotkeyField = document.createElement('label');
+            hotkeyField.className = 'class-hotkey-field';
+            hotkeyField.title = 'Optional keyboard shortcut';
+
+            const hotkeyLabel = document.createElement('span');
+            hotkeyLabel.textContent = 'Hotkey';
+
             const deleteButton = document.createElement('button');
             deleteButton.type = 'button';
             deleteButton.className = 'btn btn-secondary class-delete-btn';
             deleteButton.textContent = 'X';
             deleteButton.title = `Delete ${cls.name}`;
 
+            hotkeyField.appendChild(hotkeyLabel);
+            hotkeyField.appendChild(hotkeyInput);
+
             row.appendChild(colorInput);
             row.appendChild(nameInput);
-            row.appendChild(hotkeyInput);
+            row.appendChild(hotkeyField);
             row.appendChild(deleteButton);
             classManager.appendChild(row);
         });
@@ -87,12 +97,18 @@
             quickClassInput,
             quickAddClassBtn
         } = refs;
-        const { imageLoaded, selectionExists, classesExist, candidatesExist } = state;
+        const {
+            imageLoaded,
+            selectionExists,
+            classesExist,
+            candidatesExist,
+            activeClassName = classesExist ? 'active' : ''
+        } = state;
 
         classificationSelect.disabled = !classesExist;
         applyClassificationBtn.disabled = !selectionExists || !classesExist;
-        oneClickAcceptInput.disabled = !imageLoaded || !classesExist || !candidatesExist;
-        if (!classesExist || !imageLoaded) oneClickAcceptInput.checked = false;
+        oneClickAcceptInput.disabled = !imageLoaded || !classesExist || !candidatesExist || !activeClassName;
+        if (oneClickAcceptInput.disabled) oneClickAcceptInput.checked = false;
         quickClassInput.disabled = false;
         quickAddClassBtn.disabled = false;
     }

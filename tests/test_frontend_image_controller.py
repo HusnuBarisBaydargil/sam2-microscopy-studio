@@ -15,6 +15,10 @@ IMAGE_CONTROLLER_CALLS = [
     "imageController.getImageBadges(",
     "imageController.imageStateSummary(",
     "imageController.imageDimensions(",
+    "imageController.imageQueueState(",
+    "imageController.normalizeQueueFilter(",
+    "imageController.imageMatchesQueueFilter(",
+    "imageController.imageQueueProgressSummary(",
 ]
 
 
@@ -168,14 +172,18 @@ def test_image_controller_exports_expected_image_logic():
 
             assert.strictEqual(
                 controller.imageStateSummary(preprocessedRecord, context),
-                '2 annotations | 0 candidates | unsaved | CLAHE display/server SAM preprocessing | CSV matched'
+                '2 annotations, 0 SAM candidates, unsaved changes, CLAHE preprocessing active, CSV matched'
             );
             assert.strictEqual(
                 controller.imageStateSummary(
                     preprocessedRecord,
                     { ...context, match: { status: 'missing' }, isDirty: false }
                 ),
-                '2 annotations | 0 candidates | CLAHE display/server SAM preprocessing | CSV missing'
+                '2 annotations, 0 SAM candidates, CLAHE preprocessing active, No saved CSV'
+            );
+            assert.deepStrictEqual(
+                plain(controller.getImageBadges(preprocessedRecord, { ...context, match: { status: 'missing' } }).slice(-1)[0]),
+                { type: 'missing', label: 'No saved annotation', title: 'No saved CSV annotation file found' }
             );
 
             assert.deepStrictEqual(
@@ -187,6 +195,37 @@ def test_image_controller_exports_expected_image_logic():
                 { width: 30, height: 40 }
             );
             assert.strictEqual(controller.imageDimensions({ originalImage: { width: 0, height: 20 } }), null);
+
+            const annotatedDirtyState = controller.imageQueueState({
+                annotations: [{ id: 1 }],
+                candidates: [{ id: 10 }],
+                isDirty: true,
+                match: { status: 'missing' }
+            });
+            const emptyState = controller.imageQueueState({
+                annotations: [],
+                candidates: [],
+                isDirty: false,
+                match: { status: 'matched' }
+            });
+            assert.deepStrictEqual(plain(annotatedDirtyState), {
+                annotated: true,
+                hasCandidates: true,
+                unsaved: true,
+                missingMatched: true
+            });
+            assert.strictEqual(controller.normalizeQueueFilter('bogus'), 'all');
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'all'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'annotated'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'has_candidates'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'unsaved'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'missing_matched'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'unannotated'), false);
+            assert.strictEqual(controller.imageMatchesQueueFilter(emptyState, 'unannotated'), true);
+            assert.deepStrictEqual(
+                plain(controller.imageQueueProgressSummary([annotatedDirtyState, emptyState])),
+                { total: 2, annotated: 1, unsaved: 1, candidates: 1 }
+            );
 
             assert.deepStrictEqual(
                 plain(controller.imagePayloads([

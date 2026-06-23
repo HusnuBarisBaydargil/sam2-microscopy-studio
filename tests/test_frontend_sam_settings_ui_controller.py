@@ -49,6 +49,7 @@ def test_main_script_delegates_sam_settings_ui_helpers():
     assert "settingsController.readSamSettingsFromInputs(" not in script_js
     assert "settingsController.currentSamSettingsPayload(" not in script_js
     assert "samDeviceStatus.classList.toggle(" not in script_js
+    assert "samReadinessText.textContent" not in script_js
     assert "samRiskText.textContent" not in script_js
 
 
@@ -153,6 +154,7 @@ def test_sam_settings_ui_controller_exports_expected_dom_behavior():
             samPresetSummary: new FakeElement(),
             samDeviceSelect: new FakeElement('select'),
             samDeviceStatus: new FakeElement(),
+            samReadinessText: new FakeElement(),
             samPresetSelect: new FakeElement('select'),
             samAreaModeSelect: new FakeElement('select'),
             samPointsPerSideInput: new FakeElement('input'),
@@ -252,7 +254,21 @@ def test_sam_settings_ui_controller_exports_expected_dom_behavior():
         assert.strictEqual(refs.samPresetSummary.textContent, 'Balanced');
         assert.strictEqual(refs.samDeviceStatus.textContent, 'Auto -> CPU');
         assert.strictEqual(refs.samDeviceStatus.classList.contains('warning'), true);
+        assert.strictEqual(refs.samReadinessText.textContent, 'SAM2 model not ready. Candidate generation is unavailable.');
+        assert.strictEqual(refs.samReadinessText.classList.contains('error'), true);
+        assert.strictEqual(refs.samReadinessText.classList.contains('warning'), false);
         assert.strictEqual(refs.samRiskText.classList.contains('warning'), true);
+
+        const cpuReady = samUi.renderReadinessText(refs, {
+            mode: 'cpu',
+            active: 'cpu',
+            ready: true,
+            modelLoadSkipped: false,
+            error: ''
+        });
+        assert.strictEqual(cpuReady.level, 'warning');
+        assert.strictEqual(refs.samReadinessText.textContent, 'SAM2 is ready but running on CPU. Candidate generation may be slow.');
+        assert.strictEqual(refs.samReadinessText.classList.contains('warning'), true);
 
         refs.samPointsPerSideInput.value = '48';
         const nextSettings = samUi.readSamSettingsFromInputs(refs);

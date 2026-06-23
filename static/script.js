@@ -147,6 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
         samPresetSummary,
         samDeviceSelect,
         samDeviceStatus,
+        samReadinessText,
         samPresetSelect,
         samAreaModeSelect,
         samPointsPerSideInput,
@@ -190,12 +191,15 @@ document.addEventListener('DOMContentLoaded', () => {
         loadServerAnnotationsBtn,
         saveServerBtn,
         saveAllServerBtn,
+        unsavedStateIndicator,
         currentImageName,
         currentPreprocessBadge,
         imagePosition,
         currentImageState,
         prevImageBtn,
         nextImageBtn,
+        imageQueueProgress,
+        imageQueueFilters,
         imageList,
         annotationDirInput,
         setAnnotationDirBtn,
@@ -212,22 +216,28 @@ document.addEventListener('DOMContentLoaded', () => {
         matchSummary,
         statusText,
         annotationLogBody,
+        annotationLogHint,
         loader,
         loaderText,
         canvas,
         ctx,
         canvasContainer,
+        canvasEmptyState,
         toastContainer,
         preprocessOverlay,
         preprocessOverlayTitle,
         preprocessOverlayDetail,
+        oneClickModeBadge,
         classManager,
+        classManagerFeedback,
         addClassBtn,
         quickClassInput,
         quickAddClassBtn,
         classificationSelect,
         applyClassificationBtn,
         oneClickAcceptInput,
+        selectionSummary,
+        nextActionText,
         selectedAnnotationSummary,
         bboxXInput,
         bboxYInput,
@@ -354,6 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadMatchedBtn.addEventListener('click', handleLoadMatchedAnnotations);
     prevImageBtn.addEventListener('click', () => selectImageByOffset(-1));
     nextImageBtn.addEventListener('click', () => selectImageByOffset(1));
+    imageQueueFilters.addEventListener('click', handleImageQueueFilterClick);
     imageList.addEventListener('click', handleImageListClick);
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
@@ -515,10 +526,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function handleImageQueueFilterClick(event) {
+        const filterButton = event.target.closest('[data-filter]');
+        if (!filterButton) return;
+
+        const nextFilter = imageController.normalizeQueueFilter(filterButton.dataset.filter);
+        if (appState.imageQueueFilter === nextFilter) return;
+
+        appState.imageQueueFilter = nextFilter;
+        renderImageBrowser();
+    }
+
     function renderImageBrowser() {
         imageList.innerHTML = '';
 
         if (appState.images.length === 0) {
+            updateImageQueueProgress({ total: 0, annotated: 0, unsaved: 0, candidates: 0 });
+            renderImageQueueFilters();
             const empty = document.createElement('div');
             empty.className = 'image-list-empty';
             empty.textContent = 'No folder loaded.';
@@ -528,7 +552,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const currentIndex = currentImageIndex();
-        appState.images.forEach((imageRecord, index) => {
+        const queueItems = appState.images.map((imageRecord, index) => ({
+            imageRecord,
+            index,
+            queueState: getImageQueueState(imageRecord)
+        }));
+        updateImageQueueProgress(imageController.imageQueueProgressSummary(queueItems.map(item => item.queueState)));
+        renderImageQueueFilters();
+
+        const activeFilter = imageController.normalizeQueueFilter(appState.imageQueueFilter);
+        const visibleQueueItems = queueItems.filter(item => (
+            imageController.imageMatchesQueueFilter(item.queueState, activeFilter)
+        ));
+
+        if (visibleQueueItems.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'image-list-empty';
+            empty.textContent = 'No images match this filter.';
+            imageList.appendChild(empty);
+            updateCurrentImageDisplay();
+            return;
+        }
+
+        visibleQueueItems.forEach(({ imageRecord, index }) => {
             const item = document.createElement('button');
             item.type = 'button';
             item.className = 'image-list-item';
@@ -559,6 +605,27 @@ document.addEventListener('DOMContentLoaded', () => {
             imageList.appendChild(item);
         });
         updateCurrentImageDisplay();
+    }
+
+    function updateImageQueueProgress(summary) {
+        imageQueueProgress.textContent = `Annotated: ${summary.annotated} / ${summary.total} | Unsaved: ${summary.unsaved} | Candidates: ${summary.candidates}`;
+    }
+
+    function renderImageQueueFilters() {
+        const activeFilter = imageController.normalizeQueueFilter(appState.imageQueueFilter);
+        appState.imageQueueFilter = activeFilter;
+        imageQueueFilters.querySelectorAll('[data-filter]').forEach(button => {
+            button.classList.toggle('active', button.dataset.filter === activeFilter);
+        });
+    }
+
+    function getImageQueueState(imageRecord) {
+        return imageController.imageQueueState({
+            annotations: appState.annotationsByImage.get(imageRecord.id) || [],
+            candidates: appState.candidateAnnotationsByImage.get(imageRecord.id) || [],
+            isDirty: appState.dirtyImages.has(imageRecord.id),
+            match: appState.annotationMatchesByImage.get(imageRecord.id)
+        });
     }
 
     function getImageBadges(imageRecord) {
@@ -769,7 +836,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (
             existingCandidateCount > 0
-            && !window.confirm(`Re-run SAM2 and replace ${existingCandidateCount} current candidates? Existing annotations will be ${keepExistingAnnotations ? 'kept' : 'cleared'}.`)
+            && !window.confirm(`Re-generate SAM2 candidates and replace ${existingCandidateCount} current candidates? Existing annotations will be ${keepExistingAnnotations ? 'kept' : 'cleared'}.`)
         ) {
             return;
         }
@@ -1090,7 +1157,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (appState.classes.some((cls, clsIndex) => clsIndex !== index && cls.name === newName)) {
-            const msg = `Class "${newName}" already exists. Select annotations and use Apply to Selection to reassign them.`;
+            const msg = `Class "${newName}" already exists. Select annotations and use Apply class to selection to reassign them.`;
             updateStatus(msg);
             showToast(msg, 'info');
             renderClassControls(oldName);
@@ -1131,11 +1198,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const hotkey = normalizeHotkey(rawHotkey);
         if (hotkey && appState.classes.some((cls, clsIndex) => clsIndex !== index && cls.hotkey === hotkey)) {
-            showToast(`Hotkey "${hotkey.toUpperCase()}" is already assigned.`, 'error');
+            const msg = `Hotkey ${hotkey.toUpperCase()} is already assigned.`;
+            showClassManagerFeedback(msg);
+            showToast(msg, 'error');
             renderClassControls(classificationSelect.value);
             return;
         }
 
+        clearClassManagerFeedback();
         classInfo.hotkey = hotkey;
         scheduleProjectClassesSave();
         renderClassControls(classificationSelect.value);
@@ -1551,7 +1621,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function promptCreateClassForManualAnnotation() {
-        const rawName = window.prompt('New class name');
+        const rawName = window.prompt('Class name');
         if (rawName === null) return;
 
         const className = createClassFromName(rawName, { select: true });
@@ -1678,6 +1748,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const tagName = document.activeElement ? document.activeElement.tagName : '';
         if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tagName)) return;
 
+        const classMatch = appState.classes.find(cls => cls.hotkey === event.key.toLowerCase());
+        if (appState.isAwaitingChoice && appState.choiceInfo && classMatch) {
+            event.preventDefault();
+            finalizeAnnotation(classMatch.name);
+            return;
+        }
+
         if (event.key.toLowerCase() === 'b') {
             event.preventDefault();
             if (appState.currentImage) toggleManualMode();
@@ -1707,7 +1784,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const classMatch = appState.classes.find(cls => cls.hotkey === event.key.toLowerCase());
         if (classMatch) {
             event.preventDefault();
             processSelection(classMatch.name);
@@ -1784,6 +1860,7 @@ document.addEventListener('DOMContentLoaded', () => {
             samPresetSummary,
             samDeviceSelect,
             samDeviceStatus,
+            samReadinessText,
             samPresetSelect,
             samAreaModeSelect,
             samPointsPerSideInput,
@@ -2432,9 +2509,9 @@ document.addEventListener('DOMContentLoaded', () => {
             .join(',');
         annotationSourceFilesInput.accept = loadAnnotationFileInput.accept;
         annotationSourceFolderInput.accept = loadAnnotationFileInput.accept;
-        exportAnnotationFileBtn.textContent = `Export ${metadata.label}`;
-        loadAnnotationFileBtn.textContent = `Import ${metadata.label}`;
-        loadServerAnnotationsBtn.textContent = `Load Saved ${metadata.label}`;
+        exportAnnotationFileBtn.textContent = `Export current annotations as ${metadata.label}`;
+        loadAnnotationFileBtn.textContent = `Import current-image ${metadata.label}`;
+        loadServerAnnotationsBtn.textContent = `Load saved current-image ${metadata.label}`;
     }
 
     function imageDimensions(imageRecord) {
@@ -2719,6 +2796,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function annotationLogRefs() {
         return {
             annotationLogBody,
+            annotationLogHint,
             selectedAnnotationSummary,
             bboxXInput,
             bboxYInput,
@@ -2735,6 +2813,16 @@ document.addEventListener('DOMContentLoaded', () => {
             appState.classes,
             preferredClassName
         );
+    }
+
+    function showClassManagerFeedback(message) {
+        classManagerFeedback.textContent = message;
+        classManagerFeedback.classList.remove('hidden');
+    }
+
+    function clearClassManagerFeedback() {
+        classManagerFeedback.textContent = '';
+        classManagerFeedback.classList.add('hidden');
     }
 
     function updateButtonStates() {
@@ -2766,6 +2854,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 useServerAnnotationSourceBtn,
                 saveServerBtn,
                 saveAllServerBtn,
+                unsavedStateIndicator,
+                selectionSummary,
+                nextActionText,
+                canvasEmptyState,
+                oneClickModeBadge,
                 prevImageBtn,
                 nextImageBtn
             },
@@ -2783,9 +2876,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 activePreprocessMethod: appState.currentImage?.preprocessMethod || 'original',
                 localAnnotationSourceActive: localAnnotationSourceActive(),
                 dirtyImageCount: appState.dirtyImages.size,
+                currentImageDirty: appState.currentImage ? appState.dirtyImages.has(appState.currentImage.id) : false,
                 imageCount: appState.images.length,
                 matchSummary: appState.matchSummary,
-                currentImageIndex: currentImageIndex()
+                currentImageIndex: currentImageIndex(),
+                selectedCandidateCount: appState.selectedCandidateIds.size,
+                selectedAnnotationCount: appState.selectedAnnotationIds.size,
+                activeClassName: classificationSelect.value
             },
             {
                 classUiController,

@@ -50,19 +50,24 @@ body {
 .top-bar {
     grid-area: top;
     display: grid;
-    grid-template-columns: auto minmax(320px, 1fr) auto minmax(220px, 0.8fr);
-    gap: 14px;
-    align-items: center;
+    grid-template-columns: auto minmax(170px, auto) minmax(380px, 1fr) minmax(340px, auto);
+    grid-template-areas:
+        "brand load annotate save"
+        "status status status status";
+    gap: 8px 14px;
+    align-items: start;
     min-width: 0;
-    padding: 10px 14px;
+    padding: 8px 14px 9px;
     background-color: var(--surface-color);
     border-bottom: 1px solid var(--border-color);
 }
 
 .top-brand {
+    grid-area: brand;
     display: flex;
     flex-direction: column;
     min-width: 145px;
+    padding-top: 19px;
 }
 
 .top-brand h1 {
@@ -77,28 +82,62 @@ body {
     margin-top: 2px;
 }
 
-.top-workflow,
+.top-action-group,
 .top-save-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     min-width: 0;
 }
 
-.top-workflow {
-    flex-wrap: wrap;
+.top-load-actions {
+    grid-area: load;
+}
+
+.top-annotate-actions {
+    grid-area: annotate;
 }
 
 .top-save-actions {
+    grid-area: save;
+}
+
+.top-action-group {
+    display: grid;
+    grid-template-rows: auto auto;
+    gap: 4px;
+}
+
+.top-action-label {
+    color: var(--text-muted);
+    font-size: 0.68em;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.top-action-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.top-save-actions .top-action-controls {
     justify-content: flex-end;
 }
 
-.top-workflow .btn,
-.top-save-actions .btn {
+.top-action-controls .btn {
     width: auto;
     min-height: 36px;
     padding: 8px 11px;
     white-space: nowrap;
+}
+
+.action-helper-text {
+    flex-basis: 100%;
+    color: var(--text-muted);
+    font-size: 0.76em;
+    line-height: 1.25;
 }
 
 .manual-toggle-btn.active {
@@ -106,10 +145,35 @@ body {
     color: #fff;
 }
 
-.top-checkbox {
-    flex: 0 0 auto;
-    padding-left: 2px;
+.sam-rerun-option {
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: rgba(15, 23, 42, 0.62);
+}
+
+.unsaved-state-indicator {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 0.78em;
+    font-weight: 700;
     white-space: nowrap;
+}
+
+.unsaved-state-indicator.dirty {
+    border-color: var(--warning-color);
+    background-color: rgba(217, 119, 6, 0.16);
+    color: #fbbf24;
+}
+
+.unsaved-state-indicator.saved {
+    border-color: rgba(21, 128, 61, 0.45);
+    color: #86efac;
 }
 
 .side-panel {
@@ -168,6 +232,109 @@ body {
     font-weight: 600;
     display: flex;
     align-items: center;
+}
+
+.annotation-actions-card,
+.class-assignment-card {
+    border: 1px solid rgba(37, 99, 235, 0.38);
+}
+
+.annotation-actions-card h3,
+.class-assignment-card h3 {
+    color: #bfdbfe;
+}
+
+.utility-card {
+    padding: 0;
+}
+
+.utility-details {
+    padding: 12px 14px;
+}
+
+.utility-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    align-items: center;
+    color: var(--text-color);
+    cursor: pointer;
+    list-style: none;
+}
+
+.utility-summary::-webkit-details-marker {
+    display: none;
+}
+
+.utility-summary::after {
+    content: "Expand";
+    color: var(--text-muted);
+    font-size: 0.74em;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.utility-details[open] .utility-summary {
+    margin-bottom: 10px;
+}
+
+.utility-details[open] .utility-summary::after {
+    content: "Collapse";
+}
+
+.utility-summary span {
+    min-width: 0;
+    font-size: 0.95em;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.utility-summary small {
+    color: var(--text-muted);
+    font-size: 0.76em;
+    line-height: 1.25;
+    text-align: right;
+}
+
+.annotation-source-card {
+    padding: 0;
+}
+
+.annotation-source-details {
+    padding: 12px 14px;
+}
+
+.annotation-source-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    color: var(--text-color);
+    cursor: pointer;
+    list-style: none;
+}
+
+.annotation-source-summary::-webkit-details-marker {
+    display: none;
+}
+
+.annotation-source-summary::after {
+    content: "Expand";
+    color: var(--text-muted);
+    font-size: 0.74em;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.annotation-source-details[open] .annotation-source-summary::after {
+    content: "Collapse";
+}
+
+.annotation-source-summary span {
+    font-size: 0.95em;
+    font-weight: 700;
 }
 
 .step-num {
@@ -247,32 +414,43 @@ body {
     flex: 0 0 auto;
 }
 
+.sam2-card h3 {
+    color: #bfdbfe;
+}
+
 .sam-preset-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     margin-top: 10px;
-    padding: 10px;
+    padding: 12px;
     background-color: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: 5px;
 }
 
-.sam-preset-header {
+.sam-field {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 8px;
+    flex-direction: column;
+    gap: 6px;
 }
 
-.sam-preset-header label {
+.sam-field label,
+.sam-device-row label {
     color: var(--text-muted);
     font-size: 0.78em;
     font-weight: 600;
     text-transform: uppercase;
 }
 
+.sam-advanced-row {
+    display: flex;
+}
+
 .sam-expert-btn {
-    flex: 0 0 auto;
-    padding: 7px 9px;
+    width: 100%;
+    min-height: 34px;
+    padding: 8px 10px;
     font-size: 0.8em;
 }
 
@@ -287,17 +465,13 @@ body {
 
 .sam-device-row {
     display: grid;
-    grid-template-columns: auto minmax(76px, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
-    margin-top: 8px;
 }
 
 .sam-device-row label {
-    color: var(--text-muted);
-    font-size: 0.78em;
-    font-weight: 600;
-    text-transform: uppercase;
+    grid-column: 1 / -1;
 }
 
 .sam-device-status {
@@ -316,6 +490,35 @@ body {
     color: var(--accept-color);
 }
 
+.sam-readiness-text {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: var(--surface-color);
+    color: var(--text-muted);
+    font-size: 0.82em;
+    line-height: 1.35;
+}
+
+.sam-readiness-text.warning {
+    border-color: rgba(217, 119, 6, 0.55);
+    background-color: rgba(217, 119, 6, 0.13);
+    color: #fbbf24;
+}
+
+.sam-readiness-text.error {
+    border-color: rgba(220, 38, 38, 0.55);
+    background-color: rgba(220, 38, 38, 0.13);
+    color: #fca5a5;
+}
+
+.sam-readiness-text.ready {
+    border-color: rgba(21, 128, 61, 0.5);
+    background-color: rgba(21, 128, 61, 0.13);
+    color: #86efac;
+}
+
 #samPresetSummary {
     min-width: 0;
     color: var(--text-color);
@@ -328,7 +531,6 @@ body {
 
 .sam-warning,
 .sam-risk-text {
-    margin-top: 10px;
     color: var(--text-muted);
     font-size: 0.82em;
     line-height: 1.35;
@@ -336,6 +538,44 @@ body {
 
 .sam-risk-text.warning {
     color: var(--warning-color);
+}
+
+.sam-preprocess-panel {
+    margin-top: 4px;
+    padding: 12px 10px 10px;
+    border-top: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: rgba(31, 41, 55, 0.42);
+}
+
+.sam-subsection-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.sam-subsection-header span {
+    font-size: 0.78em;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.sam-subsection-header small {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 0.74em;
+    line-height: 1.25;
+}
+
+.sam-preprocess-panel .preprocess-action-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.sam-preprocess-panel .preprocess-action-grid #restoreOriginalBtn {
+    grid-column: 1 / -1;
 }
 
 .sam-settings-modal-content {
@@ -478,6 +718,50 @@ body {
     margin-top: 10px;
 }
 
+.image-queue-progress {
+    margin-top: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: var(--surface-color);
+    color: var(--text-muted);
+    font-size: 0.82em;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
+.image-queue-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.queue-filter-btn {
+    min-height: 28px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: var(--surface-color);
+    color: var(--text-muted);
+    font-family: var(--font-family);
+    font-size: 0.74em;
+    font-weight: 700;
+    line-height: 1.15;
+    cursor: pointer;
+}
+
+.queue-filter-btn:hover {
+    border-color: var(--primary-color);
+    color: var(--text-color);
+}
+
+.queue-filter-btn.active {
+    border-color: var(--primary-color);
+    background-color: rgba(37, 99, 235, 0.2);
+    color: #bfdbfe;
+}
+
 .image-list {
     display: flex;
     flex-direction: column;
@@ -614,11 +898,33 @@ body {
     text-transform: uppercase;
 }
 
+.project-settings-panel .form-group {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.project-settings-panel .form-control {
+    width: 100%;
+    min-width: 0;
+}
+
 .annotation-dir-row,
 .match-action-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
+}
+
+.match-action-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.match-action-row .btn {
+    min-height: 70px;
+    padding: 8px 10px;
+    line-height: 1.18;
+    white-space: normal;
 }
 
 .annotation-dir-display,
@@ -628,6 +934,12 @@ body {
     font-size: 0.82em;
     line-height: 1.35;
     overflow-wrap: anywhere;
+}
+
+.scope-helper-text {
+    color: var(--text-muted);
+    font-size: 0.82em;
+    line-height: 1.35;
 }
 
 .annotation-source-picker {
@@ -721,7 +1033,7 @@ body {
 
 .table-container {
     overflow-y: auto;
-    max-height: 36vh;
+    max-height: 34vh;
 }
 
 table {
@@ -750,6 +1062,7 @@ th {
 }
 
 .status-panel {
+    grid-area: status;
     min-width: 0;
     font-size: 0.9em;
     color: var(--text-muted);
@@ -783,6 +1096,50 @@ th {
     cursor: grab;
 }
 
+.canvas-empty-state {
+    position: absolute;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+}
+
+.canvas-empty-state-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    max-width: min(420px, 100%);
+    padding: 18px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: rgba(17, 24, 39, 0.92);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.42);
+    text-align: center;
+    pointer-events: auto;
+}
+
+.canvas-empty-state-card p {
+    color: var(--text-color);
+    font-size: 1em;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
+.canvas-empty-state-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+}
+
+.canvas-empty-state-actions .btn {
+    min-width: 124px;
+}
+
 .preprocess-overlay {
     position: absolute;
     top: 14px;
@@ -812,6 +1169,24 @@ th {
     color: var(--text-color);
     font-size: 0.76em;
     line-height: 1.25;
+}
+
+.one-click-mode-badge {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 900;
+    max-width: min(320px, calc(100% - 28px));
+    padding: 8px 11px;
+    border: 1px solid rgba(21, 128, 61, 0.75);
+    border-radius: 999px;
+    background-color: rgba(21, 128, 61, 0.88);
+    color: #ffffff;
+    font-size: 0.8em;
+    font-weight: 800;
+    line-height: 1.2;
+    pointer-events: none;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
 }
 
 .loader-overlay {
@@ -903,6 +1278,94 @@ tr.highlighted {
     gap: 12px;
 }
 
+.class-workflow-panel,
+.class-manager-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.class-manager-panel {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.class-manager-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.class-manager-header span {
+    font-size: 0.78em;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.class-manager-header small {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 0.74em;
+    line-height: 1.25;
+    text-align: right;
+}
+
+.class-manager-feedback {
+    padding: 7px 9px;
+    border: 1px solid rgba(217, 119, 6, 0.55);
+    border-radius: 5px;
+    background-color: rgba(217, 119, 6, 0.13);
+    color: #fbbf24;
+    font-size: 0.82em;
+    line-height: 1.35;
+}
+
+.selection-summary {
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: var(--surface-color);
+    color: var(--text-muted);
+    font-size: 0.86em;
+    font-weight: 700;
+}
+
+.next-action-text {
+    padding: 8px 10px;
+    border: 1px solid rgba(8, 145, 178, 0.45);
+    border-radius: 5px;
+    background-color: rgba(8, 145, 178, 0.12);
+    color: #bae6fd;
+    font-size: 0.84em;
+    line-height: 1.35;
+}
+
+.annotation-log-hint {
+    margin-bottom: 8px;
+    color: var(--text-muted);
+    font-size: 0.8em;
+    line-height: 1.35;
+}
+
+.annotation-empty-state {
+    padding: 18px 10px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.annotation-empty-title {
+    color: var(--text-color);
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.annotation-empty-detail {
+    font-size: 0.86em;
+    line-height: 1.35;
+}
+
 .annotation-inspector {
     display: flex;
     flex-direction: column;
@@ -960,6 +1423,10 @@ tr.highlighted {
     gap: 10px;
 }
 
+.annotation-file-actions .scope-helper-text {
+    grid-column: 1 / -1;
+}
+
 .annotation-file-actions #saveServerBtn,
 .annotation-file-actions #saveAllServerBtn {
     grid-column: 1 / -1;
@@ -972,7 +1439,10 @@ tr.highlighted {
 }
 
 .form-group label {
+    color: var(--text-muted);
+    font-size: 0.82em;
     font-weight: 500;
+    white-space: nowrap;
 }
 
 .quick-class-row {
@@ -1016,7 +1486,6 @@ tr.highlighted {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin-bottom: 12px;
 }
 
 .class-empty-state {
@@ -1030,7 +1499,7 @@ tr.highlighted {
 
 .class-row {
     display: grid;
-    grid-template-columns: 34px minmax(0, 1fr) 42px 32px;
+    grid-template-columns: 34px minmax(0, 1fr) 76px 32px;
     gap: 8px;
     align-items: center;
 }
@@ -1060,6 +1529,27 @@ tr.highlighted {
 .class-hotkey-input {
     text-align: center;
     text-transform: uppercase;
+}
+
+.class-hotkey-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 28px;
+    gap: 4px;
+    align-items: center;
+    min-width: 0;
+}
+
+.class-hotkey-field span {
+    color: var(--text-muted);
+    font-size: 0.68em;
+    font-weight: 700;
+    line-height: 1.1;
+    text-transform: uppercase;
+}
+
+.class-hotkey-field .class-hotkey-input {
+    width: 28px;
+    padding: 7px 4px;
 }
 
 .class-delete-btn {
@@ -1224,26 +1714,15 @@ tr.highlighted {
     }
 
     .top-bar {
-        grid-template-columns: auto minmax(280px, 1fr) auto;
+        grid-template-columns: auto minmax(170px, auto) minmax(360px, 1fr);
         grid-template-areas:
-            "brand workflow save"
+            "brand load annotate"
+            "save save save"
             "status status status";
     }
 
-    .top-brand {
-        grid-area: brand;
-    }
-
-    .top-workflow {
-        grid-area: workflow;
-    }
-
-    .top-save-actions {
-        grid-area: save;
-    }
-
-    .status-panel {
-        grid-area: status;
+    .top-save-actions .top-action-controls {
+        justify-content: flex-start;
     }
 }
 
@@ -1271,13 +1750,18 @@ tr.highlighted {
         grid-template-columns: minmax(0, 1fr);
         grid-template-areas:
             "brand"
-            "workflow"
+            "load"
+            "annotate"
             "save"
             "status";
     }
 
-    .top-workflow,
-    .top-save-actions {
+    .top-brand {
+        padding-top: 0;
+    }
+
+    .top-action-controls,
+    .top-save-actions .top-action-controls {
         justify-content: flex-start;
     }
 

@@ -104,6 +104,7 @@ def test_state_store_exports_expected_state_behavior():
         assert.strictEqual(state.projectSettings.annotationFormat, 'csv');
         assert.strictEqual(state.projectSettings.samSettings.preset, 'cell_1920x1440');
         assert.strictEqual(state.annotationSource.mode, 'server');
+        assert.strictEqual(state.imageQueueFilter, 'all');
         assert.strictEqual(state.cameraZoom, 1);
         assert.strictEqual(store.currentImageId(state), null);
         assert.strictEqual(store.currentImageIndex(state), -1);
@@ -156,6 +157,7 @@ def test_state_store_exports_expected_state_behavior():
         state.images = [{ id: 'image-1' }];
         state.currentImage = state.images[0];
         state.matchSummary = { matched: 1 };
+        state.imageQueueFilter = 'unsaved';
         state.annotationCounter = 7;
         state.candidateCounter = 9;
         state.cameraOffset = { x: 10, y: 11 };
@@ -168,6 +170,7 @@ def test_state_store_exports_expected_state_behavior():
         assert.strictEqual(state.annotationsByImage.size, 0);
         assert.strictEqual(state.dirtyImages.size, 0);
         assert.strictEqual(state.matchSummary, null);
+        assert.strictEqual(state.imageQueueFilter, 'all');
         assert.strictEqual(state.annotationCounter, 0);
         assert.strictEqual(state.candidateCounter, 0);
         assert.deepStrictEqual(plain(state.cameraOffset), { x: 0, y: 0 });

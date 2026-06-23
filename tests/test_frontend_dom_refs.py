@@ -15,11 +15,21 @@ EXPECTED_DOM_REFS = [
     "samSettingsModal",
     "preprocessSettingsModal",
     "annotationLogBody",
+    "annotationLogHint",
     "canvas",
     "ctx",
     "canvasContainer",
+    "canvasEmptyState",
     "toastContainer",
     "classManager",
+    "classManagerFeedback",
+    "imageQueueProgress",
+    "imageQueueFilters",
+    "unsavedStateIndicator",
+    "selectionSummary",
+    "nextActionText",
+    "oneClickModeBadge",
+    "samReadinessText",
     "helpModal",
 ]
 
@@ -89,7 +99,17 @@ def test_dom_refs_exports_expected_element_mapping():
         assert.strictEqual(domRefs.DOM_REF_IDS.loadImageInput, 'loadImageInput');
         assert.strictEqual(domRefs.DOM_REF_IDS.canvas, 'mainCanvas');
         assert.strictEqual(domRefs.DOM_REF_IDS.canvasContainer, 'canvas-container');
+        assert.strictEqual(domRefs.DOM_REF_IDS.canvasEmptyState, 'canvasEmptyState');
         assert.strictEqual(domRefs.DOM_REF_IDS.toastContainer, 'toast-container');
+        assert.strictEqual(domRefs.DOM_REF_IDS.imageQueueProgress, 'imageQueueProgress');
+        assert.strictEqual(domRefs.DOM_REF_IDS.imageQueueFilters, 'imageQueueFilters');
+        assert.strictEqual(domRefs.DOM_REF_IDS.unsavedStateIndicator, 'unsavedStateIndicator');
+        assert.strictEqual(domRefs.DOM_REF_IDS.selectionSummary, 'selectionSummary');
+        assert.strictEqual(domRefs.DOM_REF_IDS.nextActionText, 'nextActionText');
+        assert.strictEqual(domRefs.DOM_REF_IDS.oneClickModeBadge, 'oneClickModeBadge');
+        assert.strictEqual(domRefs.DOM_REF_IDS.annotationLogHint, 'annotationLogHint');
+        assert.strictEqual(domRefs.DOM_REF_IDS.classManagerFeedback, 'classManagerFeedback');
+        assert.strictEqual(domRefs.DOM_REF_IDS.samReadinessText, 'samReadinessText');
 
         const requestedIds = [];
         const canvasContext = { kind: '2d-context' };
@@ -113,7 +133,17 @@ def test_dom_refs_exports_expected_element_mapping():
         assert.strictEqual(refs.runSamBtn.id, 'runSamBtn');
         assert.strictEqual(refs.canvas.id, 'mainCanvas');
         assert.strictEqual(refs.canvasContainer.id, 'canvas-container');
+        assert.strictEqual(refs.canvasEmptyState.id, 'canvasEmptyState');
         assert.strictEqual(refs.toastContainer.id, 'toast-container');
+        assert.strictEqual(refs.imageQueueProgress.id, 'imageQueueProgress');
+        assert.strictEqual(refs.imageQueueFilters.id, 'imageQueueFilters');
+        assert.strictEqual(refs.unsavedStateIndicator.id, 'unsavedStateIndicator');
+        assert.strictEqual(refs.selectionSummary.id, 'selectionSummary');
+        assert.strictEqual(refs.nextActionText.id, 'nextActionText');
+        assert.strictEqual(refs.oneClickModeBadge.id, 'oneClickModeBadge');
+        assert.strictEqual(refs.annotationLogHint.id, 'annotationLogHint');
+        assert.strictEqual(refs.classManagerFeedback.id, 'classManagerFeedback');
+        assert.strictEqual(refs.samReadinessText.id, 'samReadinessText');
         assert.strictEqual(refs.ctx, canvasContext);
         assert.strictEqual(requestedIds.length, Object.keys(domRefs.DOM_REF_IDS).length);
         assert.ok(requestedIds.includes('helpModal'));

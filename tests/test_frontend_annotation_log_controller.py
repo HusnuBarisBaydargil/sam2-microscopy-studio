@@ -89,6 +89,13 @@ def test_annotation_log_controller_exports_expected_dom_behavior():
                 this.classList = {
                     add: className => this.classes.add(className),
                     remove: className => this.classes.delete(className),
+                    toggle: (className, force) => {
+                        if (force) {
+                            this.classes.add(className);
+                        } else {
+                            this.classes.delete(className);
+                        }
+                    },
                     contains: className => this.classes.has(className)
                 };
             }
@@ -135,6 +142,7 @@ def test_annotation_log_controller_exports_expected_dom_behavior():
 
         const refs = {
             annotationLogBody: new FakeElement('tbody'),
+            annotationLogHint: new FakeElement('div'),
             selectedAnnotationSummary: new FakeElement('div'),
             bboxXInput: new FakeElement('input'),
             bboxYInput: new FakeElement('input'),
@@ -148,8 +156,17 @@ def test_annotation_log_controller_exports_expected_dom_behavior():
             { id: 2, class: 'membrane', bbox: [1.2, 2.6, 3.1, 4.8] },
             { id: 1, class: 'nucleus', bbox: [5, 6, 7, 8] }
         ];
+        log.renderAnnotationLog(refs, [], new Set());
+        assert.strictEqual(refs.annotationLogBody.children.length, 1);
+        assert.strictEqual(refs.annotationLogBody.children[0].children[0].children[0].textContent, 'No annotations yet.');
+        assert.strictEqual(refs.annotationLogBody.children[0].children[0].children[1].textContent, 'Generate SAM2 candidates, assign a class, or draw a manual box.');
+        assert.strictEqual(refs.annotationLogHint.textContent, '');
+        assert.strictEqual(refs.annotationLogHint.classList.contains('hidden'), true);
+
         log.renderAnnotationLog(refs, annotations, new Set([2]));
         assert.strictEqual(refs.annotationLogBody.children.length, 2);
+        assert.strictEqual(refs.annotationLogHint.textContent, 'Click row to select. Right-click to delete.');
+        assert.strictEqual(refs.annotationLogHint.classList.contains('hidden'), false);
         assert.strictEqual(refs.annotationLogBody.children[0].dataset.annotationId, 1);
         assert.strictEqual(refs.annotationLogBody.children[1].classList.contains('highlighted'), true);
         assert.strictEqual(refs.annotationLogBody.children[1].children[2].textContent, '(1, 3, 3, 5)');
@@ -185,7 +202,7 @@ def test_annotation_log_controller_exports_expected_dom_behavior():
         assert.strictEqual(refs.logContextMenu.classList.contains('hidden'), true);
 
         log.renderAnnotationInspector(refs, [annotations[0]]);
-        assert.strictEqual(refs.selectedAnnotationSummary.textContent, '#2 (membrane)');
+        assert.strictEqual(refs.selectedAnnotationSummary.textContent, 'Box #2 selected');
         assert.strictEqual(refs.applyBoxEditBtn.disabled, false);
         assert.strictEqual(refs.bboxXInput.value, 1);
         assert.strictEqual(refs.bboxYInput.value, 3);
@@ -199,7 +216,7 @@ def test_annotation_log_controller_exports_expected_dom_behavior():
         assert.strictEqual(readBbox.valid, true);
 
         log.renderAnnotationInspector(refs, []);
-        assert.strictEqual(refs.selectedAnnotationSummary.textContent, 'None');
+        assert.strictEqual(refs.selectedAnnotationSummary.textContent, 'No selected box');
         assert.strictEqual(refs.applyBoxEditBtn.disabled, true);
         assert.strictEqual(refs.bboxXInput.value, '');
         log.renderAnnotationInspector(refs, annotations);

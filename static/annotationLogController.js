@@ -50,6 +50,12 @@
 
     function renderAnnotationLog(refs, annotations, selectedAnnotationIds) {
         refs.annotationLogBody.innerHTML = '';
+        renderLogHint(refs, annotations.length > 0);
+
+        if (annotations.length === 0) {
+            refs.annotationLogBody.appendChild(emptyLogRow());
+            return;
+        }
 
         annotations
             .slice()
@@ -71,13 +77,40 @@
             });
     }
 
+    function renderLogHint(refs, hasAnnotations) {
+        refs.annotationLogHint.textContent = hasAnnotations
+            ? 'Click row to select. Right-click to delete.'
+            : '';
+        refs.annotationLogHint.classList.toggle('hidden', !hasAnnotations);
+    }
+
+    function emptyLogRow() {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'annotation-empty-state';
+
+        const title = document.createElement('div');
+        title.className = 'annotation-empty-title';
+        title.textContent = 'No annotations yet.';
+
+        const detail = document.createElement('div');
+        detail.className = 'annotation-empty-detail';
+        detail.textContent = 'Generate SAM2 candidates, assign a class, or draw a manual box.';
+
+        cell.appendChild(title);
+        cell.appendChild(detail);
+        row.appendChild(cell);
+        return row;
+    }
+
     function renderAnnotationInspector(refs, selectedAnnotations) {
         const hasSingleSelection = selectedAnnotations.length === 1;
 
         if (selectedAnnotations.length === 0) {
-            refs.selectedAnnotationSummary.textContent = 'None';
+            refs.selectedAnnotationSummary.textContent = 'No selected box';
         } else if (hasSingleSelection) {
-            refs.selectedAnnotationSummary.textContent = `#${selectedAnnotations[0].id} (${selectedAnnotations[0].class})`;
+            refs.selectedAnnotationSummary.textContent = `Box #${selectedAnnotations[0].id} selected`;
         } else {
             refs.selectedAnnotationSummary.textContent = `${selectedAnnotations.length} selected`;
         }

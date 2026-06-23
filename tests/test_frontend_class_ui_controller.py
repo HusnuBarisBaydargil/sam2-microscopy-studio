@@ -159,8 +159,10 @@ def test_class_ui_controller_exports_expected_dom_behavior():
         assert.strictEqual(classManager.children[0].children[0].value, '#39d353');
         assert.strictEqual(classManager.children[0].children[1].className, 'class-name-input');
         assert.strictEqual(classManager.children[0].children[1].value, 'nucleus');
-        assert.strictEqual(classManager.children[0].children[2].className, 'class-hotkey-input');
-        assert.strictEqual(classManager.children[0].children[2].value, 'N');
+        assert.strictEqual(classManager.children[0].children[2].className, 'class-hotkey-field');
+        assert.strictEqual(classManager.children[0].children[2].children[0].textContent, 'Hotkey');
+        assert.strictEqual(classManager.children[0].children[2].children[1].className, 'class-hotkey-input');
+        assert.strictEqual(classManager.children[0].children[2].children[1].value, 'N');
         assert.strictEqual(classManager.children[0].children[3].className, 'btn btn-secondary class-delete-btn');
         assert.strictEqual(classificationSelect.children.length, 2);
         assert.strictEqual(classificationSelect.children[1].value, 'membrane');
@@ -188,7 +190,8 @@ def test_class_ui_controller_exports_expected_dom_behavior():
             imageLoaded: false,
             selectionExists: true,
             classesExist: false,
-            candidatesExist: true
+            candidatesExist: true,
+            activeClassName: ''
         });
         assert.strictEqual(refs.classificationSelect.disabled, true);
         assert.strictEqual(refs.applyClassificationBtn.disabled, true);
@@ -196,6 +199,28 @@ def test_class_ui_controller_exports_expected_dom_behavior():
         assert.strictEqual(refs.oneClickAcceptInput.checked, false);
         assert.strictEqual(refs.quickClassInput.disabled, false);
         assert.strictEqual(refs.quickAddClassBtn.disabled, false);
+
+        refs.oneClickAcceptInput.checked = true;
+        classUi.syncClassControlStates(refs, {
+            imageLoaded: true,
+            selectionExists: false,
+            classesExist: true,
+            candidatesExist: false,
+            activeClassName: 'nucleus'
+        });
+        assert.strictEqual(refs.oneClickAcceptInput.disabled, true);
+        assert.strictEqual(refs.oneClickAcceptInput.checked, false);
+
+        refs.oneClickAcceptInput.checked = true;
+        classUi.syncClassControlStates(refs, {
+            imageLoaded: true,
+            selectionExists: false,
+            classesExist: true,
+            candidatesExist: true,
+            activeClassName: ''
+        });
+        assert.strictEqual(refs.oneClickAcceptInput.disabled, true);
+        assert.strictEqual(refs.oneClickAcceptInput.checked, false);
         """
     )
 

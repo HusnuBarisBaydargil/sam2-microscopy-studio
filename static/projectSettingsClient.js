@@ -80,7 +80,7 @@
 
     function samDeviceLabel(device) {
         if (device.error) return 'Needs attention';
-        if (device.modelLoadSkipped) return 'Load skipped';
+        if (device.modelLoadSkipped) return 'SAM2 unavailable';
         if (device.mode === 'auto' && device.active === 'cuda') return 'Auto -> CUDA';
         if (device.mode === 'auto' && device.active === 'cpu') return 'Auto -> CPU';
         if (device.active === 'cuda') return 'CUDA';
@@ -94,6 +94,44 @@
         if (device.active === 'cpu') return 'SAM2 is running on CPU; inference may be slow.';
         if (device.active === 'cuda') return 'SAM2 is running with CUDA acceleration.';
         return device.cudaAvailable ? 'CUDA is available.' : 'CUDA is not available.';
+    }
+
+    function samDeviceReadiness(device) {
+        const normalizedDevice = normalizeSamDeviceForClient(device);
+        if (normalizedDevice.error) {
+            return {
+                level: 'error',
+                text: `SAM2 needs attention: ${normalizedDevice.error}`
+            };
+        }
+        if (normalizedDevice.modelLoadSkipped) {
+            return {
+                level: 'error',
+                text: 'SAM2 candidate generation is unavailable in this session.'
+            };
+        }
+        if (!normalizedDevice.ready) {
+            return {
+                level: 'error',
+                text: 'SAM2 model not ready. Candidate generation is unavailable.'
+            };
+        }
+        if (normalizedDevice.active === 'cpu') {
+            return {
+                level: 'warning',
+                text: 'SAM2 is ready but running on CPU. Candidate generation may be slow.'
+            };
+        }
+        if (normalizedDevice.active === 'cuda') {
+            return {
+                level: 'ready',
+                text: 'SAM2 is ready with CUDA acceleration.'
+            };
+        }
+        return {
+            level: 'warning',
+            text: 'SAM2 readiness is unknown. Check the selected device before generating candidates.'
+        };
     }
 
     function samRiskWarnings(params, imageRecord = null) {
@@ -161,6 +199,7 @@
         normalizeSamDeviceForClient,
         samDeviceLabel,
         samDeviceTitle,
+        samDeviceReadiness,
         samRiskWarnings,
         samParamsEqual,
         normalizeSamPresets,

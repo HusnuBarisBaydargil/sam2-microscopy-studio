@@ -69,11 +69,24 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         const vm = require('vm');
 
         function element() {
+            const classes = new Set();
             return {
                 disabled: false,
                 textContent: '',
                 title: '',
-                checked: true
+                checked: true,
+                classList: {
+                    toggle(className, force) {
+                        if (force) {
+                            classes.add(className);
+                        } else {
+                            classes.delete(className);
+                        }
+                    },
+                    contains(className) {
+                        return classes.has(className);
+                    }
+                }
             };
         }
 
@@ -102,6 +115,11 @@ def test_controls_ui_controller_exports_expected_button_behavior():
                 useServerAnnotationSourceBtn: element(),
                 saveServerBtn: element(),
                 saveAllServerBtn: element(),
+                unsavedStateIndicator: element(),
+                selectionSummary: element(),
+                nextActionText: element(),
+                canvasEmptyState: element(),
+                oneClickModeBadge: element(),
                 prevImageBtn: element(),
                 nextImageBtn: element()
             };
@@ -121,7 +139,8 @@ def test_controls_ui_controller_exports_expected_button_behavior():
                     classState = { classRefs, state };
                     classRefs.classificationSelect.disabled = !state.classesExist;
                     classRefs.applyClassificationBtn.disabled = !state.selectionExists || !state.classesExist;
-                    classRefs.oneClickAcceptInput.disabled = !state.imageLoaded || !state.classesExist || !state.candidatesExist;
+                    classRefs.oneClickAcceptInput.disabled = !state.imageLoaded || !state.classesExist || !state.candidatesExist || !state.activeClassName;
+                    if (classRefs.oneClickAcceptInput.disabled) classRefs.oneClickAcceptInput.checked = false;
                 }
             }
         };
@@ -134,6 +153,7 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         assert.ok(controls);
 
         const activeRefs = refs();
+        activeRefs.oneClickAcceptInput.checked = true;
         controls.updateButtonStates(activeRefs, {
             imageLoaded: true,
             samHasRun: true,
@@ -148,25 +168,38 @@ def test_controls_ui_controller_exports_expected_button_behavior():
             activePreprocessMethod: 'clahe',
             localAnnotationSourceActive: true,
             dirtyImageCount: 2,
+            currentImageDirty: true,
             imageCount: 3,
             matchSummary: { matched: 1 },
-            currentImageIndex: 1
+            currentImageIndex: 1,
+            selectedCandidateCount: 2,
+            selectedAnnotationCount: 1,
+            activeClassName: 'WBC'
         }, helpers);
 
         assert.strictEqual(activeRefs.runSamBtn.disabled, false);
-        assert.strictEqual(activeRefs.runSamBtn.textContent, 'Re-run SAM2');
+        assert.strictEqual(activeRefs.canvasEmptyState.classList.contains('hidden'), true);
+        assert.strictEqual(activeRefs.oneClickModeBadge.textContent, 'One-click accept: WBC');
+        assert.strictEqual(activeRefs.oneClickModeBadge.classList.contains('hidden'), false);
+        assert.strictEqual(activeRefs.runSamBtn.textContent, 'Re-generate SAM2 candidates');
         assert.strictEqual(activeRefs.clearCandidatesBtn.disabled, false);
         assert.strictEqual(activeRefs.manualAnnotationBtn.textContent, 'Exit Manual Box (B)');
         assert.strictEqual(activeRefs.applyPreprocessBtn.disabled, false);
-        assert.strictEqual(activeRefs.applyPreprocessBtn.textContent, 'CLAHE Active');
+        assert.strictEqual(activeRefs.applyPreprocessBtn.textContent, 'CLAHE active');
         assert.strictEqual(activeRefs.restoreOriginalBtn.disabled, false);
         assert.strictEqual(activeRefs.preprocessSummary.textContent, 'CLAHE active. Original image is preserved.');
+        assert.strictEqual(activeRefs.selectionSummary.textContent, 'Selected: 2 candidates, 1 annotation');
+        assert.strictEqual(activeRefs.nextActionText.textContent, 'Apply active class or press a class hotkey.');
         assert.strictEqual(activeRefs.undoBtn.disabled, false);
         assert.strictEqual(activeRefs.exportAnnotationFileBtn.disabled, false);
         assert.strictEqual(activeRefs.refreshMatchesBtn.textContent, 'Check Local Matches');
-        assert.strictEqual(activeRefs.loadMatchedBtn.textContent, 'Load Local Matched');
+        assert.strictEqual(activeRefs.loadMatchedBtn.textContent, 'Import Local Matched');
         assert.strictEqual(activeRefs.useServerAnnotationSourceBtn.disabled, false);
         assert.strictEqual(activeRefs.saveAllServerBtn.disabled, false);
+        assert.strictEqual(activeRefs.unsavedStateIndicator.textContent, 'Unsaved changes: current + 1 other');
+        assert.strictEqual(activeRefs.unsavedStateIndicator.title, 'There are unsaved annotation changes.');
+        assert.strictEqual(activeRefs.unsavedStateIndicator.classList.contains('dirty'), true);
+        assert.strictEqual(activeRefs.unsavedStateIndicator.classList.contains('saved'), false);
         assert.strictEqual(activeRefs.refreshMatchesBtn.disabled, false);
         assert.strictEqual(activeRefs.loadMatchedBtn.disabled, false);
         assert.strictEqual(activeRefs.prevImageBtn.disabled, false);
@@ -175,6 +208,7 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         assert.strictEqual(classState.state.selectionExists, true);
         assert.strictEqual(classState.state.classesExist, true);
         assert.strictEqual(classState.state.candidatesExist, true);
+        assert.strictEqual(classState.state.activeClassName, 'WBC');
 
         const inactiveRefs = refs();
         controls.updateButtonStates(inactiveRefs, {
@@ -191,34 +225,52 @@ def test_controls_ui_controller_exports_expected_button_behavior():
             activePreprocessMethod: 'original',
             localAnnotationSourceActive: false,
             dirtyImageCount: 0,
+            currentImageDirty: false,
             imageCount: 0,
             matchSummary: null,
-            currentImageIndex: -1
+            currentImageIndex: -1,
+            selectedCandidateCount: 0,
+            selectedAnnotationCount: 0,
+            activeClassName: ''
         }, helpers);
 
         assert.strictEqual(inactiveRefs.runSamBtn.disabled, true);
-        assert.strictEqual(inactiveRefs.runSamBtn.textContent, 'Run SAM2 & Filter');
+        assert.strictEqual(inactiveRefs.canvasEmptyState.classList.contains('hidden'), false);
+        assert.strictEqual(inactiveRefs.oneClickModeBadge.textContent, '');
+        assert.strictEqual(inactiveRefs.oneClickModeBadge.classList.contains('hidden'), true);
+        assert.strictEqual(inactiveRefs.runSamBtn.textContent, 'Generate SAM2 candidates');
         assert.strictEqual(inactiveRefs.clearCandidatesBtn.disabled, true);
         assert.strictEqual(inactiveRefs.keepAnnotationsInput.disabled, true);
         assert.strictEqual(inactiveRefs.manualAnnotationBtn.disabled, true);
         assert.strictEqual(inactiveRefs.manualAnnotationBtn.textContent, 'Manual Box (B)');
         assert.strictEqual(inactiveRefs.applyPreprocessBtn.disabled, true);
-        assert.strictEqual(inactiveRefs.applyPreprocessBtn.textContent, 'Original Active');
+        assert.strictEqual(inactiveRefs.applyPreprocessBtn.textContent, 'Original image active');
         assert.strictEqual(inactiveRefs.restoreOriginalBtn.disabled, true);
         assert.strictEqual(inactiveRefs.openPreprocessSettingsBtn.disabled, false);
         assert.strictEqual(inactiveRefs.preprocessSummary.textContent, 'Original image is preserved.');
+        assert.strictEqual(inactiveRefs.selectionSummary.textContent, 'Selected: 0 candidates, 0 annotations');
+        assert.strictEqual(inactiveRefs.nextActionText.textContent, 'Load an image or folder.');
         assert.strictEqual(inactiveRefs.loadAnnotationFileBtn.disabled, true);
         assert.strictEqual(inactiveRefs.loadAnnotationFileInput.disabled, true);
         assert.strictEqual(inactiveRefs.loadServerAnnotationsBtn.disabled, true);
         assert.strictEqual(inactiveRefs.refreshMatchesBtn.textContent, 'Check Matches');
-        assert.strictEqual(inactiveRefs.loadMatchedBtn.textContent, 'Load Matched');
+        assert.strictEqual(inactiveRefs.loadMatchedBtn.textContent, 'Import Matched');
         assert.strictEqual(inactiveRefs.useServerAnnotationSourceBtn.disabled, true);
         assert.strictEqual(inactiveRefs.saveServerBtn.disabled, true);
         assert.strictEqual(inactiveRefs.saveAllServerBtn.disabled, true);
+        assert.strictEqual(inactiveRefs.unsavedStateIndicator.textContent, 'All changes saved');
+        assert.strictEqual(inactiveRefs.unsavedStateIndicator.title, 'No unsaved annotation changes.');
+        assert.strictEqual(inactiveRefs.unsavedStateIndicator.classList.contains('dirty'), false);
+        assert.strictEqual(inactiveRefs.unsavedStateIndicator.classList.contains('saved'), true);
         assert.strictEqual(inactiveRefs.refreshMatchesBtn.disabled, true);
         assert.strictEqual(inactiveRefs.loadMatchedBtn.disabled, true);
         assert.strictEqual(inactiveRefs.prevImageBtn.disabled, true);
         assert.strictEqual(inactiveRefs.nextImageBtn.disabled, true);
+        assert.strictEqual(controls.unsavedStateText(1, true), 'Unsaved changes: current image');
+        assert.strictEqual(controls.unsavedStateText(1, false), 'Unsaved changes: 1 image');
+        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: false, annotationsExist: false }), 'Generate SAM2 candidates or draw manual boxes.');
+        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: true, annotationsExist: false }), 'Select candidate boxes.');
+        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: false, annotationsExist: true }), 'Review, edit, save, or export annotations.');
         """
     )
 

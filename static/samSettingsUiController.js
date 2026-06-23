@@ -70,6 +70,16 @@
         refs.samDeviceStatus.title = projectSettingsClient.samDeviceTitle(device);
         refs.samDeviceStatus.classList.toggle('warning', !device.ready || device.active === 'cpu' || Boolean(device.error));
         refs.samDeviceStatus.classList.toggle('ready', device.ready && device.active === 'cuda');
+        renderReadinessText(refs, device);
+    }
+
+    function renderReadinessText(refs, samDevice) {
+        const readiness = projectSettingsClient.samDeviceReadiness(samDevice);
+        refs.samReadinessText.textContent = readiness.text;
+        refs.samReadinessText.classList.toggle('error', readiness.level === 'error');
+        refs.samReadinessText.classList.toggle('warning', readiness.level === 'warning');
+        refs.samReadinessText.classList.toggle('ready', readiness.level === 'ready');
+        return readiness;
     }
 
     function renderRiskText(refs, state, currentImage) {
@@ -101,6 +111,7 @@
         renderPresetOptions,
         renderSettingsPanel,
         renderDevicePanel,
+        renderReadinessText,
         renderRiskText,
         readSamSettingsFromInputs,
         currentSamSettingsPayload,

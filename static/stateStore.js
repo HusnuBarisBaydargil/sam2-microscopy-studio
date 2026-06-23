@@ -52,6 +52,7 @@
                 params: { ...preset.params }
             })),
             matchSummary: null,
+            imageQueueFilter: 'all',
             annotationSource: {
                 mode: 'server',
                 files: [],
@@ -169,6 +170,7 @@
         state.selectedAnnotationIds.clear();
         state.dirtyImages.clear();
         state.matchSummary = null;
+        state.imageQueueFilter = 'all';
         state.annotationCounter = 0;
         state.candidateCounter = 0;
         state.logItemToModify = null;
