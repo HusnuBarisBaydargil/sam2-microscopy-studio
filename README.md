@@ -12,8 +12,9 @@ The project runs as a local browser UI backed by a Python server. SAM2 inference
 - Convert SAM candidates to final annotations with batch apply or one-click active-class accept.
 - Preserve SAM metadata including contour, mask area, source, predicted IoU, and stability score.
 - Draw manual boxes, edit boxes, nudge boxes, undo geometry/class changes, and clamp boxes to image bounds.
-- Manage class names, colors, and hotkeys.
+- Manage class names, colors, and hotkeys that apply classes to the current selection.
 - Save/load annotations on the server with duplicate filename handling.
+- Match annotation files across a loaded folder, or import one annotation file into the current image.
 - Import/export CSV, YOLO TXT, COCO JSON, and Pascal VOC XML.
 - Apply preprocessing for display and SAM inference.
 - Optional API token protection for shared/local-network deployments.
@@ -124,6 +125,17 @@ Open:
 ```text
 http://127.0.0.1:5000
 ```
+
+## Annotation Workflow Notes
+
+The UI separates annotation file handling into two scopes:
+
+- **Batch annotation matching** matches annotation files across all loaded images.
+- **Current-image import** imports one annotation file into the current image only.
+
+Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format.
+
+Class hotkeys apply the selected class to the current candidate or annotation selection. One-click accept is shown as an active canvas badge when enabled.
 
 ## Running Tests
 
