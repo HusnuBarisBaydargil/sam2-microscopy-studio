@@ -171,6 +171,22 @@ def test_annotation_codecs_round_trip_supported_formats():
         assert.deepStrictEqual(coco.annotations[0].contour, [[10, 5], [50, 5], [50, 25]]);
         assert.strictEqual(coco.annotations[0].mask_area, 750);
 
+        const staleCoco = JSON.parse(codecs.buildAnnotationExport(
+            imageRecord.name,
+            [{
+                ...annotations[0],
+                bbox: [60, 5, 40, 20]
+            }],
+            'coco',
+            imageRecord,
+            { classes }
+        ).content);
+        assert.strictEqual(staleCoco.annotations[0].segmentation, undefined);
+        assert.strictEqual(staleCoco.annotations[0].mask_area, undefined);
+        assert.strictEqual(staleCoco.annotations[0].area, 800);
+        assert.strictEqual(staleCoco.annotations[0].source, 'sam');
+        assert.strictEqual(staleCoco.annotations[0].predicted_iou, 0.91);
+
         for (const format of ['csv', 'csv_rich', 'yolo', 'coco', 'voc']) {
             const exported = codecs.buildAnnotationExport(
                 imageRecord.name,

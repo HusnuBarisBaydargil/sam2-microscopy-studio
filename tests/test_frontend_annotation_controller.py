@@ -13,6 +13,7 @@ ANNOTATION_CONTROLLER_CALLS = [
     "annotationController.annotationFromCandidate(",
     "annotationController.convertSelectedCandidates(",
     "annotationController.relabelSelectedAnnotations(",
+    "annotationController.invalidateMaskGeometryForChanges(",
     "annotationController.undoLastBatch(",
     "annotationController.deleteAnnotationById(",
     "annotationController.selectedAnnotations(",
@@ -171,6 +172,36 @@ def test_annotation_controller_exports_expected_mutation_behavior():
         assert.strictEqual(undoMessage, 'Reverted box edit for 1 annotations.');
         assert.deepStrictEqual(plain(annotations[0].bbox), [1, 1, 2, 2]);
         assert.strictEqual(controller.undoLastBatch(annotations, converted.remainingCandidates, history), null);
+
+        const samAnnotation = {
+            id: 4,
+            bbox: [10, 10, 20, 20],
+            class: 'Nucleus',
+            type: 'sam_final',
+            contour: [[10, 10], [30, 10], [30, 30]],
+            mask_area: 275,
+            source: 'sam2',
+            predicted_iou: 0.93,
+            stability_score: 0.97
+        };
+        const geometryChanges = [{ id: 4, oldBbox: [10, 10, 20, 20], newBbox: [15, 12, 20, 20] }];
+        samAnnotation.bbox = geometryChanges[0].newBbox.slice();
+        controller.invalidateMaskGeometryForChanges([samAnnotation], geometryChanges);
+        assert.strictEqual(samAnnotation.contour, undefined);
+        assert.strictEqual(samAnnotation.mask_area, undefined);
+        assert.strictEqual(samAnnotation.source, 'sam2');
+        assert.strictEqual(samAnnotation.predicted_iou, 0.93);
+        assert.deepStrictEqual(plain(geometryChanges[0].oldMaskGeometry), {
+            contour: [[10, 10], [30, 10], [30, 30]],
+            mask_area: 275
+        });
+
+        const geometryHistory = [{ type: 'geometry_edit', changes: geometryChanges }];
+        undoMessage = controller.undoLastBatch([samAnnotation], [], geometryHistory);
+        assert.strictEqual(undoMessage, 'Reverted box edit for 1 annotations.');
+        assert.deepStrictEqual(plain(samAnnotation.bbox), [10, 10, 20, 20]);
+        assert.deepStrictEqual(plain(samAnnotation.contour), [[10, 10], [30, 10], [30, 30]]);
+        assert.strictEqual(samAnnotation.mask_area, 275);
 
         const deleteHistory = [{
             type: 'convert_candidates',

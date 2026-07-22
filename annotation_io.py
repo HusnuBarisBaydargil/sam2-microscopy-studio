@@ -236,9 +236,14 @@ def _clamp_annotations_to_image(annotations, image_size):
             field_name=f"annotations[{index}].bbox",
             allow_flip=True,
         )
-        if any(abs(normalized_bbox[item] - clamped_bbox[item]) > 1e-9 for item in range(4)):
+        bbox_changed = any(abs(normalized_bbox[item] - clamped_bbox[item]) > 1e-9 for item in range(4))
+        if bbox_changed:
             changed_count += 1
-        clamped_annotations.append({**annotation, "bbox": clamped_bbox})
+        clamped_annotation = {**annotation, "bbox": clamped_bbox}
+        if bbox_changed:
+            clamped_annotation.pop("contour", None)
+            clamped_annotation.pop("mask_area", None)
+        clamped_annotations.append(clamped_annotation)
 
     return clamped_annotations, changed_count
 
@@ -284,6 +289,20 @@ def _optional_finite_number(value):
     return number if _is_finite_number(number) else None
 
 
+def _contour_matches_bbox(contour, bbox, tolerance=1.5):
+    if not contour or not bbox:
+        return False
+    x, y, width, height = _normalize_bbox(bbox)
+    x_values = [point[0] for point in contour]
+    y_values = [point[1] for point in contour]
+    contour_bounds = (min(x_values), min(y_values), max(x_values), max(y_values))
+    bbox_bounds = (x, y, x + width, y + height)
+    return all(
+        abs(contour_value - bbox_value) <= tolerance
+        for contour_value, bbox_value in zip(contour_bounds, bbox_bounds)
+    )
+
+
 def _segmentation_from_contour(contour):
     normalized = _normalize_contour(contour)
     if not normalized:
@@ -303,21 +322,28 @@ def _contour_from_coco_segmentation(segmentation):
     return _normalize_contour(points)
 
 
-def _annotation_mask_metadata(annotation):
+def _annotation_mask_metadata(annotation, bbox=None):
     metadata = {}
+    raw_contour_present = annotation.get("contour") not in (None, "")
+    contour_is_consistent = True
 
     try:
         contour = _normalize_contour(annotation.get("contour"))
     except ValueError:
         contour = None
+    if raw_contour_present and (not contour or (bbox is not None and not _contour_matches_bbox(contour, bbox))):
+        contour_is_consistent = False
     if contour:
-        metadata["contour"] = contour
+        if contour_is_consistent:
+            metadata["contour"] = contour
 
     for source_key, target_key in (
         ("mask_area", "mask_area"),
         ("predicted_iou", "predicted_iou"),
         ("stability_score", "stability_score"),
     ):
+        if target_key == "mask_area" and not contour_is_consistent:
+            continue
         number = _optional_finite_number(annotation.get(source_key))
         if number is not None:
             metadata[target_key] = number
@@ -358,7 +384,7 @@ def _normalize_annotation_payload(annotation, index):
         "class": class_name,
         "type": annotation_type,
     }
-    normalized.update(_annotation_mask_metadata(annotation))
+    normalized.update(_annotation_mask_metadata(annotation, bbox=bbox))
     return normalized
 
 
@@ -423,7 +449,7 @@ def _annotation_from_csv_row(row, fallback_id):
         "predicted_iou": normalized.get("predicted_iou"),
         "stability_score": normalized.get("stability_score"),
     }
-    annotation.update(_annotation_mask_metadata(metadata_input))
+    annotation.update(_annotation_mask_metadata(metadata_input, bbox=bbox))
     return annotation
 
 
@@ -470,7 +496,7 @@ def _write_annotation_csv(path, image_name, annotations, include_metadata=False)
                 _spreadsheet_safe_cell(_normalize_class_name(annotation.get("class"))),
             ]
             if include_metadata:
-                metadata = _annotation_mask_metadata(annotation)
+                metadata = _annotation_mask_metadata(annotation, bbox=[x, y, w, h])
                 row.extend([
                     json.dumps(metadata.get("contour", []), separators=(",", ":")) if metadata.get("contour") else "",
                     _format_number(metadata["mask_area"]) if "mask_area" in metadata else "",
@@ -656,7 +682,7 @@ def _read_annotation_coco(path, image_name):
             "predicted_iou": raw_annotation.get("predicted_iou"),
             "stability_score": raw_annotation.get("stability_score"),
         }
-        annotation.update(_annotation_mask_metadata(metadata_input))
+        annotation.update(_annotation_mask_metadata(metadata_input, bbox=bbox))
         annotations.append(annotation)
     return annotations
 
@@ -680,7 +706,7 @@ def _write_annotation_coco(path, image_name, annotations, image_size, classes):
         x, y, w, h = _normalize_bbox(annotation.get("bbox"))
         class_name = _normalize_class_name(annotation.get("class"))
         category_id = class_indices.get(class_name, 0) + 1
-        metadata = _annotation_mask_metadata(annotation)
+        metadata = _annotation_mask_metadata(annotation, bbox=[x, y, w, h])
         segmentation = _segmentation_from_contour(metadata.get("contour"))
         area = metadata.get("mask_area", w * h)
         coco_annotation = {

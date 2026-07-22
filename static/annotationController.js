@@ -4,7 +4,52 @@
         throw new Error('SAM2AnnotationCodecs must be loaded before annotationController.js.');
     }
 
-    const { annotationMaskMetadata } = annotationCodecs;
+    const { annotationMaskMetadata, normalizeContour } = annotationCodecs;
+
+    function maskGeometrySnapshot(annotation) {
+        const snapshot = {};
+        const contour = normalizeContour(annotation?.contour);
+        if (contour) {
+            snapshot.contour = contour.map(point => point.slice());
+        }
+        const maskArea = Number(annotation?.mask_area);
+        if (annotation?.mask_area !== '' && annotation?.mask_area !== null && Number.isFinite(maskArea)) {
+            snapshot.mask_area = maskArea;
+        }
+        return snapshot;
+    }
+
+    function invalidateMaskGeometry(annotation) {
+        const snapshot = maskGeometrySnapshot(annotation);
+        delete annotation.contour;
+        delete annotation.mask_area;
+        return snapshot;
+    }
+
+    function restoreMaskGeometry(annotation, snapshot) {
+        delete annotation.contour;
+        delete annotation.mask_area;
+        if (!snapshot) return;
+        if (snapshot.contour) {
+            annotation.contour = snapshot.contour.map(point => point.slice());
+        }
+        if (Object.prototype.hasOwnProperty.call(snapshot, 'mask_area')) {
+            annotation.mask_area = snapshot.mask_area;
+        }
+    }
+
+    function invalidateMaskGeometryForChanges(annotations, changes) {
+        const annotationsById = new Map(annotations.map(annotation => [annotation.id, annotation]));
+        changes.forEach(change => {
+            const annotation = annotationsById.get(change.id);
+            if (!annotation) return;
+            const oldMaskGeometry = invalidateMaskGeometry(annotation);
+            if (Object.keys(oldMaskGeometry).length > 0) {
+                change.oldMaskGeometry = oldMaskGeometry;
+            }
+        });
+        return changes;
+    }
 
     function annotationFromCandidate(state, candidate, className, clampBboxToImage) {
         const bbox = clampBboxToImage(candidate.bbox);
@@ -96,7 +141,10 @@
             const changesById = new Map(lastBatch.changes.map(change => [change.id, change]));
             annotations.forEach(annotation => {
                 const change = changesById.get(annotation.id);
-                if (change) annotation.bbox = change.oldBbox.slice();
+                if (change) {
+                    annotation.bbox = change.oldBbox.slice();
+                    restoreMaskGeometry(annotation, change.oldMaskGeometry);
+                }
             });
             return `Reverted box edit for ${lastBatch.changes.length} annotations.`;
         }
@@ -215,6 +263,7 @@
         annotationFromCandidate,
         convertSelectedCandidates,
         relabelSelectedAnnotations,
+        invalidateMaskGeometryForChanges,
         undoLastBatch,
         deleteAnnotationById,
         normalizeAnnotation,

@@ -166,16 +166,42 @@
         return Number.isFinite(number) ? number : null;
     }
 
+    function contourMatchesBbox(contour, bbox, tolerance = 1.5) {
+        if (!contour || !Array.isArray(bbox) || bbox.length !== 4) return false;
+        const numericBbox = bbox.map(Number);
+        if (numericBbox.some(value => !Number.isFinite(value))) return false;
+        const [x, y, width, height] = numericBbox;
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        contour.forEach(([pointX, pointY]) => {
+            minX = Math.min(minX, pointX);
+            minY = Math.min(minY, pointY);
+            maxX = Math.max(maxX, pointX);
+            maxY = Math.max(maxY, pointY);
+        });
+        const contourBounds = [minX, minY, maxX, maxY];
+        const bboxBounds = [x, y, x + width, y + height];
+        return contourBounds.every((value, index) => Math.abs(value - bboxBounds[index]) <= tolerance);
+    }
+
     function annotationMaskMetadata(annotation) {
         const metadata = {};
+        const rawContourPresent = annotation?.contour !== null
+            && annotation?.contour !== undefined
+            && annotation?.contour !== '';
         const contour = normalizeContour(annotation?.contour);
-        if (contour) metadata.contour = contour;
+        const contourIsConsistent = !rawContourPresent
+            || (contour && (!Array.isArray(annotation?.bbox) || contourMatchesBbox(contour, annotation.bbox)));
+        if (contour && contourIsConsistent) metadata.contour = contour;
 
         [
             ['mask_area', 'mask_area'],
             ['predicted_iou', 'predicted_iou'],
             ['stability_score', 'stability_score']
         ].forEach(([sourceKey, targetKey]) => {
+            if (targetKey === 'mask_area' && !contourIsConsistent) return;
             const value = optionalFiniteNumber(annotation?.[sourceKey]);
             if (value !== null) metadata[targetKey] = value;
         });
@@ -491,6 +517,7 @@
                     class: categoryName,
                     type: 'loaded',
                     ...annotationMaskMetadata({
+                        bbox,
                         contour,
                         mask_area: annotation.mask_area ?? (contour ? annotation.area : null),
                         source: annotation.source,
@@ -660,6 +687,7 @@
             class: className || 'Unlabeled',
             type: 'loaded',
             ...annotationMaskMetadata({
+                bbox,
                 contour: record.contour || record.segmentation,
                 mask_area: record.mask_area,
                 source: record.source,

@@ -1422,6 +1422,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const changes = canvasInteractionController.commitBoxEdit(appState, findAnnotationById, bboxesEqual);
 
         if (changes.length > 0) {
+            annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
             currentHistory().push({ type: 'geometry_edit', changes });
             markCurrentImageDirty();
             renderImageBrowser();
@@ -1456,6 +1457,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (changes.length === 0) return;
 
+        annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
         currentHistory().push({ type: 'geometry_edit', changes });
         markCurrentImageDirty();
         renderImageBrowser();
@@ -2775,9 +2777,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (bboxesEqual(oldBbox, newBbox)) return;
 
         annotation.bbox = newBbox;
+        const changes = [{ id: annotation.id, oldBbox, newBbox: newBbox.slice() }];
+        annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
         currentHistory().push({
             type: 'geometry_edit',
-            changes: [{ id: annotation.id, oldBbox, newBbox: newBbox.slice() }]
+            changes
         });
         markCurrentImageDirty();
         renderImageBrowser();
