@@ -48,6 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!annotationController) {
         throw new Error('SAM2AnnotationController must be loaded before script.js.');
     }
+    const projectDatasetController = window.SAM2ProjectDatasetController;
+    if (!projectDatasetController) {
+        throw new Error('SAM2ProjectDatasetController must be loaded before script.js.');
+    }
     const annotationWorkflowController = window.SAM2AnnotationWorkflowController;
     if (!annotationWorkflowController) {
         throw new Error('SAM2AnnotationWorkflowController must be loaded before script.js.');
@@ -187,6 +191,8 @@ document.addEventListener('DOMContentLoaded', () => {
         undoBtn,
         redoBtn,
         exportAnnotationFileBtn,
+        validateProjectDatasetBtn,
+        exportProjectDatasetBtn,
         loadAnnotationFileBtn,
         loadAnnotationFileInput,
         loadServerAnnotationsBtn,
@@ -348,6 +354,8 @@ document.addEventListener('DOMContentLoaded', () => {
     undoBtn.addEventListener('click', handleUndoAction);
     redoBtn.addEventListener('click', handleRedoAction);
     exportAnnotationFileBtn.addEventListener('click', handleExportAnnotationFile);
+    validateProjectDatasetBtn.addEventListener('click', handleValidateProjectDataset);
+    exportProjectDatasetBtn.addEventListener('click', handleExportProjectDataset);
     loadAnnotationFileBtn.addEventListener('click', () => {
         if (appState.currentImage) loadAnnotationFileInput.click();
     });
@@ -465,6 +473,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.error) throw new Error(data.error);
 
             imageRecord.originalImage = await loadImageElement(data.image_url);
+            imageRecord.width = Number(data.width) || imageRecord.originalImage.width;
+            imageRecord.height = Number(data.height) || imageRecord.originalImage.height;
             return true;
         } catch (error) {
             console.error('Image Load Error:', error);
@@ -2381,6 +2391,101 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function buildProjectDatasetExport() {
+        return projectDatasetController.buildProjectCocoExport({
+            projectId: appState.projectSettings.projectId,
+            schemaVersion: appState.projectSettings.schemaVersion,
+            taskType: appState.projectSettings.taskType,
+            images: appState.images,
+            annotationsByImage: appState.annotationsByImage,
+            annotationMatchesByImage: appState.annotationMatchesByImage,
+            candidateAnnotationsByImage: appState.candidateAnnotationsByImage,
+            dirtyImageIds: appState.dirtyImages,
+            classes: appState.classes,
+            imageName: publicImageName,
+            imagePath: publicImagePath,
+            normalizeAnnotation
+        });
+    }
+
+    function reportProjectValidation(validation) {
+        const msg = projectDatasetController.validationSummary(validation);
+        updateStatus(msg);
+        showToast(msg, validation.valid ? (validation.warnings.length > 0 ? 'info' : 'success') : 'error');
+        if (!validation.valid) console.warn('Project dataset validation errors:', validation.errors);
+        if (validation.warnings.length > 0) {
+            console.info('Project dataset validation warnings:', validation.warnings);
+        }
+        return msg;
+    }
+
+    async function ensureProjectImageDimensions() {
+        const missingDimensions = appState.images.filter(imageRecord => !imageController.imageDimensions(imageRecord));
+        if (missingDimensions.length === 0) return true;
+
+        setLoader(true, `Inspecting ${missingDimensions.length} project image${missingDimensions.length === 1 ? '' : 's'}...`);
+        try {
+            for (const imageRecord of missingDimensions) {
+                const response = await apiWorkflows.loadImageInfo(imageRecord.file);
+                if (!response.ok) throw new Error(`Server error for ${publicImageName(imageRecord)}: ${response.statusText}`);
+                const data = await response.json();
+                if (data.error) throw new Error(`${publicImageName(imageRecord)}: ${data.error}`);
+                imageRecord.width = Number(data.width);
+                imageRecord.height = Number(data.height);
+                if (!imageController.imageDimensions(imageRecord)) {
+                    throw new Error(`${publicImageName(imageRecord)} returned invalid dimensions.`);
+                }
+            }
+            return true;
+        } catch (error) {
+            const msg = `Could not inspect project images: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+            return false;
+        } finally {
+            setLoader(false);
+        }
+    }
+
+    async function handleValidateProjectDataset() {
+        if (!await ensureProjectImageDimensions()) return;
+        try {
+            const { validation } = buildProjectDatasetExport();
+            reportProjectValidation(validation);
+        } catch (error) {
+            const msg = `Failed to validate project dataset: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+        }
+    }
+
+    async function handleExportProjectDataset() {
+        if (!await ensureProjectImageDimensions()) return;
+        try {
+            const exportData = buildProjectDatasetExport();
+            reportProjectValidation(exportData.validation);
+            if (!exportData.validation.valid) return;
+
+            const blob = new Blob([exportData.content], { type: `${exportData.mime};charset=utf-8` });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = exportData.fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            const msg = `Exported project COCO: ${exportData.validation.stats.images} images and ${exportData.validation.stats.annotations} annotations.`;
+            updateStatus(msg);
+            showToast(msg, 'success');
+        } catch (error) {
+            const msg = `Failed to export project dataset: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+        }
+    }
+
     async function handleLoadAnnotationFile(event) {
         const file = event.target.files[0];
         event.target.value = '';
@@ -2960,6 +3065,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 redoBtn,
                 undoBtn,
                 exportAnnotationFileBtn,
+                validateProjectDatasetBtn,
+                exportProjectDatasetBtn,
                 loadAnnotationFileBtn,
                 loadAnnotationFileInput,
                 loadServerAnnotationsBtn,

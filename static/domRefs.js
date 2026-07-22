@@ -51,6 +51,8 @@
         undoBtn: 'undoBtn',
         redoBtn: 'redoBtn',
         exportAnnotationFileBtn: 'exportAnnotationFileBtn',
+        validateProjectDatasetBtn: 'validateProjectDatasetBtn',
+        exportProjectDatasetBtn: 'exportProjectDatasetBtn',
         loadAnnotationFileBtn: 'loadAnnotationFileBtn',
         loadAnnotationFileInput: 'loadAnnotationFileInput',
         loadServerAnnotationsBtn: 'loadServerAnnotationsBtn',

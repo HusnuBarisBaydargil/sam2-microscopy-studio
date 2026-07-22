@@ -11,6 +11,7 @@ STATIC_DIR = REPO_ROOT / "static"
 
 WORKFLOW_CALLS = [
     "apiWorkflows.loadImage(",
+    "apiWorkflows.loadImageInfo(",
     "apiWorkflows.preprocessImage(",
     "apiWorkflows.runSam(",
     "apiWorkflows.saveProjectSettings(",
@@ -118,6 +119,11 @@ def test_api_workflows_build_expected_requests():
         async function main() {
             await workflows.loadImage('image-file');
             assert.strictEqual(calls.at(-1).url, 'api/load_image');
+            assert.strictEqual(calls.at(-1).init.method, 'POST');
+            assert.deepStrictEqual(calls.at(-1).init.body.fields, [['image', 'image-file', undefined]]);
+
+            await workflows.loadImageInfo('image-file');
+            assert.strictEqual(calls.at(-1).url, 'api/image_info');
             assert.strictEqual(calls.at(-1).init.method, 'POST');
             assert.deepStrictEqual(calls.at(-1).init.body.fields, [['image', 'image-file', undefined]]);
 

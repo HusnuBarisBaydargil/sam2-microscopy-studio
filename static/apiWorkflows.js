@@ -20,6 +20,12 @@
         return apiFetch(apiPath('/api/load_image'), { method: 'POST', body: formData });
     }
 
+    function loadImageInfo(file) {
+        const formData = new FormData();
+        formData.append('image', file);
+        return apiFetch(apiPath('/api/image_info'), { method: 'POST', body: formData });
+    }
+
     function preprocessImage({ file, method, params }) {
         const formData = new FormData();
         formData.append('image', file);
@@ -72,6 +78,7 @@
 
     window.SAM2ApiWorkflows = {
         loadImage,
+        loadImageInfo,
         preprocessImage,
         runSam,
         saveProjectSettings,

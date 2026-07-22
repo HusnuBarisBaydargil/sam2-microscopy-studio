@@ -48,9 +48,20 @@ def test_load_image_rejects_bad_extension_and_accepts_png(client):
         content_type="multipart/form-data",
     )
     assert good.status_code == 200
-    image_url = good.get_json()["image_url"]
+    image_data = good.get_json()
+    image_url = image_data["image_url"]
     assert image_url.startswith("data:image/png;base64,")
     base64.b64decode(image_url.split(",", 1)[1])
+    assert image_data["width"] == 4
+    assert image_data["height"] == 3
+
+    info = client.post(
+        "/api/image_info",
+        data={"image": (png_bytes(size=(9, 7)), "sample.png")},
+        content_type="multipart/form-data",
+    )
+    assert info.status_code == 200
+    assert info.get_json() == {"width": 9, "height": 7}
 
 
 def test_annotation_save_and_load_round_trip_csv(client):

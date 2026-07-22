@@ -456,12 +456,31 @@ def load_image_endpoint():
         _validate_uploaded_image_file(file)
         image_stream = file.read()
         image = _decode_pil_rgb_image(image_stream, context="image")
+        width, height = image.size
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         encoded_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        return jsonify({ "image_url": f"data:image/png;base64,{encoded_image}" })
+        return jsonify({
+            "image_url": f"data:image/png;base64,{encoded_image}",
+            "width": width,
+            "height": height,
+        })
     except Exception as e:
         return jsonify({"error": f"Failed to decode image file: {e}"}), 400
+
+
+@image_bp.route("/image_info", methods=["POST"])
+def image_info_endpoint():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+    file = request.files['image']
+    try:
+        _validate_uploaded_image_file(file)
+        image = _decode_pil_rgb_image(file.read(), context="image")
+        width, height = image.size
+        return jsonify({"width": width, "height": height})
+    except Exception as e:
+        return jsonify({"error": f"Failed to inspect image file: {e}"}), 400
 
 @preprocess_bp.route("/clahe", methods=["POST"])
 def apply_clahe_endpoint():

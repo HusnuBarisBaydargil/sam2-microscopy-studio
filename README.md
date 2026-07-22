@@ -15,6 +15,7 @@ The project runs as a local browser UI backed by a Python server. SAM2 inference
 - Manage class names, colors, and hotkeys that apply classes to the current selection.
 - Save/load annotations on the server with duplicate filename handling.
 - Match annotation files across a loaded folder, or import one annotation file into the current image.
+- Validate all loaded images and export one consolidated project-level COCO dataset.
 - Import/export CSV, YOLO TXT, COCO JSON, and Pascal VOC XML.
 - Apply preprocessing for display and SAM inference.
 - Optional API token protection for shared/local-network deployments.
@@ -134,7 +135,9 @@ The UI separates annotation file handling into two scopes:
 - **Batch annotation matching** matches annotation files across all loaded images.
 - **Current-image import** imports one annotation file into the current image only.
 
-Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format.
+Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format. `Validate project` checks every loaded image, stable class identity, annotation reference, bounding box, area, and polygon. `Export project COCO` runs the same validation and downloads one deterministic COCO file containing all loaded images, including unannotated images as negative examples.
+
+Project validation blocks export when the project manifest identity, class IDs, image dimensions, filenames, annotation IDs, category references, geometry, or segmentation structure are invalid. It also blocks when a saved matched annotation file is known but has not been loaded, preventing accidental false-negative images. Missing dimensions for lazily loaded folder images are inspected automatically. Unsaved in-memory annotations, unaccepted SAM candidates, ambiguous matches, and images without final annotations are reported as warnings; unsaved edits are included in the export, while candidates are not.
 
 Server-side annotations and the project manifest are written atomically. The versioned manifest is the canonical project record and contains the stable project UUID, task type, settings, and classes with persistent numeric IDs. Existing `project_settings.json` and `project_classes.json` files are migrated automatically when the first manifest is created. After a file has been saved more than once, its previous validated version is retained beside it with a `.bak` suffix. If the primary file is missing or invalid, the application reads the backup automatically; the next successful save replaces the primary while preserving a valid recovery copy.
 
@@ -256,7 +259,7 @@ CSV saves one file per image as `*_annotations.csv`. CSV export neutralizes spre
 
 YOLO saves one `.txt` file per image using normalized `class_id x_center y_center width height` rows. YOLO class IDs are the manifest class ID minus one, so renaming or reordering classes does not change exported IDs. Deleted IDs are not reused and gaps may therefore remain.
 
-COCO saves one JSON dataset file per image with `images`, `categories`, and `annotations`. Category IDs come directly from stable manifest class IDs. SAM contours are exported as polygon `segmentation` when present.
+COCO current-image export saves one JSON dataset file for the selected image. Project COCO export combines every loaded image into one validated dataset with deterministic image ordering and globally unique annotation IDs. Category IDs come directly from stable manifest class IDs. SAM contours are exported as polygon `segmentation` when present.
 
 Pascal VOC saves one XML file per image with `object/bndbox` entries.
 

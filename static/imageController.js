@@ -24,6 +24,8 @@
             publicName: `${publicBaseName}${extension}`,
             publicDisplayPath: `${publicBaseName}${extension}`,
             file,
+            width: Number(imageElement?.width) || null,
+            height: Number(imageElement?.height) || null,
             originalImage: imageElement,
             processedImage: null,
             preprocessMethod: 'original',
@@ -130,8 +132,10 @@
 
     function imageDimensions(imageRecord) {
         const image = imageRecord?.originalImage || imageRecord?.processedImage;
-        if (!image || !image.width || !image.height) return null;
-        return { width: image.width, height: image.height };
+        const width = Number(image?.width || imageRecord?.width);
+        const height = Number(image?.height || imageRecord?.height);
+        if (!(width > 0) || !(height > 0)) return null;
+        return { width, height };
     }
 
     function imageQueueState(context) {
