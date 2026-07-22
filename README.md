@@ -1,6 +1,6 @@
 # SAM2 Annotation Web App
 
-A local Flask web application for SAM2-assisted image annotation. The app is designed for cell, microscopy, and medical-image review workflows where a user loads images, generates SAM2 candidate masks, converts selected candidates into final annotations, edits boxes, manages classes, and exports annotations in common dataset formats.
+A local Flask web application for SAM2-assisted annotation of 2D RGB or rendered microscopy images. The current project task is bounding-box annotation for object-detection datasets: a user loads images, generates SAM2 candidate masks, converts selected candidates into final box annotations, edits boxes, manages classes, and exports annotations in common dataset formats.
 
 The project runs as a local browser UI backed by a Python server. SAM2 inference happens on the server; annotation review and editing happen in the browser.
 
@@ -31,6 +31,7 @@ static/style.css               UI styling
 scripts/check_setup.py         Environment/model sanity check
 tests/                         Unit, API, and static UI contract tests
 requirements.txt               Runtime dependencies
+requirements-ci.txt            Runtime plus pinned test and lint dependencies
 requirements-dev.txt           Test/dev dependencies
 project_manifest.example.json  Example versioned project manifest
 project_settings.example.json  Legacy settings example used during migration
@@ -45,6 +46,23 @@ Dockerfile                     Optional container runtime
 - CUDA-capable GPU recommended for practical SAM2 inference.
 
 The app can start without loading SAM2 when `SKIP_SAM_MODEL_LOAD=1`, which is useful for tests and API work.
+
+## Supported Image Scope
+
+The supported workflow is local annotation of a single 2D RGB image, or a 2D image that has already been rendered or composited to RGB. JPEG, PNG, BMP, and single-image TIFF files are accepted (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, and `.tiff`). PNG is the recommended lossless interchange format. TIFF display support varies between browsers, so convert a TIFF to PNG before annotation if the browser cannot render it reliably.
+
+Images are decoded as color and converted to RGB. Annotations use pixel coordinates from that decoded 2D image; the application does not preserve source intensity values, channel identity, acquisition metadata, or physical units. The default decoded-image limit is 25,000,000 pixels and can be changed with `MAX_DECODED_IMAGE_PIXELS`.
+
+The following are not currently supported as native scientific-image data:
+
+- 16-bit or floating-point intensity preservation.
+- Independent fluorescence channels or in-app channel selection and compositing.
+- OME-TIFF metadata and dimension semantics.
+- Multipage TIFF, Z-stacks, 3D volumes, or time series as linked dimensions.
+- Whole-slide or pyramidal/tiled image navigation.
+- DICOM and other modality-specific medical-image formats.
+
+Render or export one 2D RGB plane before loading those sources. The planned instance-segmentation task will initially use this same image scope unless scientific-image decoding is expanded separately.
 
 ## SAM2 Attribution And Model Weights
 
@@ -148,7 +166,7 @@ Class hotkeys apply the selected class to the current candidate or annotation se
 Install dev dependencies:
 
 ```powershell
-pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 Run tests without loading the SAM2 checkpoint:
@@ -156,7 +174,8 @@ Run tests without loading the SAM2 checkpoint:
 ```powershell
 $env:SKIP_SAM_MODEL_LOAD = "1"
 $env:ALLOW_ABSOLUTE_ANNOTATION_DIR = "1"
-pytest
+python -m pytest tests -q
+python -m ruff check .
 ```
 
 On Windows, if pytest cannot access the default temp directory, use a workspace-local temp directory:
@@ -164,6 +183,8 @@ On Windows, if pytest cannot access the default temp directory, use a workspace-
 ```powershell
 pytest --basetemp pytest_workspace_tmp\run -p no:cacheprovider
 ```
+
+GitHub Actions runs the same Python 3.12 test and Ruff checks on every push and pull request. The workflow installs CPU-only PyTorch, skips SAM2 checkpoint loading, and provisions Node.js so the frontend JavaScript contract tests run instead of being skipped. CI dependencies are isolated in `requirements-ci.txt`; `requirements-dev.txt` adds the optional notebook, analysis, and dataset tooling used for local development.
 
 ## Docker
 
