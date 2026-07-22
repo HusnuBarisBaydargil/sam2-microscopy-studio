@@ -87,6 +87,7 @@ def _normalize_classes(raw_classes):
 
     normalized_classes = []
     seen_names = set()
+    seen_ids = set()
     for item in raw_classes[:MAX_CLASSES_PER_PROJECT]:
         if not isinstance(item, dict):
             continue
@@ -98,7 +99,12 @@ def _normalize_classes(raw_classes):
             continue
         color = _normalize_class_color(item.get("color"))
         hotkey = _normalize_hotkey(item.get("hotkey"))
-        normalized_classes.append({"name": name, "color": color, "hotkey": hotkey})
+        class_info = {"name": name, "color": color, "hotkey": hotkey}
+        class_id = item.get("id")
+        if isinstance(class_id, int) and not isinstance(class_id, bool) and class_id > 0 and class_id not in seen_ids:
+            class_info["id"] = class_id
+            seen_ids.add(class_id)
+        normalized_classes.append(class_info)
         seen_names.add(name)
 
     return normalized_classes
@@ -510,13 +516,20 @@ def _write_annotation_csv(path, image_name, annotations, include_metadata=False)
 
 
 def _class_name_for_index(classes, class_index):
+    for class_info in classes:
+        class_id = class_info.get("id")
+        if isinstance(class_id, int) and class_id - 1 == class_index:
+            return class_info["name"]
     if 0 <= class_index < len(classes):
         return classes[class_index]["name"]
     return f"class_{class_index}"
 
 
 def _class_index_map(classes):
-    return {class_info["name"]: index for index, class_info in enumerate(classes)}
+    return {
+        class_info["name"]: class_info.get("id", index + 1) - 1
+        for index, class_info in enumerate(classes)
+    }
 
 
 def _format_number(value):
@@ -713,7 +726,7 @@ def _write_annotation_coco(path, image_name, annotations, image_size, classes):
     image_width, image_height = image_size or (0, 0)
     class_indices = _class_index_map(classes)
     categories = [
-        {"id": index + 1, "name": class_info["name"]}
+        {"id": class_info.get("id", index + 1), "name": class_info["name"]}
         for index, class_info in enumerate(classes)
     ]
     coco_annotations = []

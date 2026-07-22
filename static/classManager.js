@@ -41,9 +41,14 @@
         return classes.some(cls => cls.name === className);
     }
 
-    function buildNewClass(className, classes) {
+    function buildNewClass(className, classes, minimumClassId = 1) {
         const normalizedName = normalizeClassName(className);
+        const nextClassId = classes.reduce((maximum, cls) => {
+            const classId = Number(cls.id);
+            return Number.isInteger(classId) && classId > 0 ? Math.max(maximum, classId) : maximum;
+        }, Math.max(classes.length, Number(minimumClassId) - 1)) + 1;
         return {
+            id: nextClassId,
             name: normalizedName,
             color: CLASS_COLOR_PALETTE[classes.length % CLASS_COLOR_PALETTE.length],
             hotkey: getFirstAvailableHotkey(normalizedName, classes)
@@ -53,6 +58,7 @@
     function normalizeClassList(classes) {
         const seenNames = new Set();
         const seenHotkeys = new Set();
+        const seenIds = new Set();
         const normalizedClasses = [];
 
         if (!Array.isArray(classes)) return [];
@@ -67,7 +73,13 @@
                 ? cls.color
                 : CLASS_COLOR_PALETTE[index % CLASS_COLOR_PALETTE.length];
 
-            normalizedClasses.push({ name, color, hotkey: safeHotkey });
+            const normalizedClass = { name, color, hotkey: safeHotkey };
+            const classId = Number(cls.id);
+            if (Number.isInteger(classId) && classId > 0 && !seenIds.has(classId)) {
+                normalizedClass.id = classId;
+                seenIds.add(classId);
+            }
+            normalizedClasses.push(normalizedClass);
             seenNames.add(name);
             if (safeHotkey) seenHotkeys.add(safeHotkey);
         });
@@ -75,7 +87,7 @@
         return normalizedClasses;
     }
 
-    function ensureClassesForAnnotations(classes, annotations) {
+    function ensureClassesForAnnotations(classes, annotations, minimumClassId = 1) {
         const nextClasses = classes.slice();
         const existingNames = new Set(nextClasses.map(cls => cls.name));
         let addedCount = 0;
@@ -86,12 +98,13 @@
 
             if (existingNames.has(className)) return;
 
-            nextClasses.push(buildNewClass(className, nextClasses));
+            nextClasses.push(buildNewClass(className, nextClasses, minimumClassId));
             existingNames.add(className);
             addedCount++;
         });
 
-        return { classes: nextClasses, addedCount };
+        const nextClassId = nextClasses.reduce((maximum, cls) => Math.max(maximum, Number(cls.id) || 0), 0) + 1;
+        return { classes: nextClasses, addedCount, nextClassId: Math.max(nextClassId, minimumClassId) };
     }
 
     window.SAM2ClassManager = {

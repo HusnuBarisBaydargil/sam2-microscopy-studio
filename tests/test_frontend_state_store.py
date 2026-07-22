@@ -102,6 +102,9 @@ def test_state_store_exports_expected_state_behavior():
         assert.ok(store);
 
         const state = store.createAppState();
+        assert.strictEqual(state.nextClassId, 1);
+        assert.strictEqual(state.projectSettings.schemaVersion, 1);
+        assert.strictEqual(state.projectSettings.taskType, 'bounding_box');
         assert.strictEqual(state.projectSettings.annotationOutputDir, 'annotations');
         assert.strictEqual(state.projectSettings.annotationFormat, 'csv');
         assert.strictEqual(state.projectSettings.samSettings.preset, 'cell_1920x1440');

@@ -15,6 +15,7 @@
     function createAppState() {
         return {
             classes: DEFAULT_CLASSES.map(cls => ({ ...cls })),
+            nextClassId: 1,
             images: [],
             currentImage: null,
             annotationsByImage: new Map(),
@@ -26,6 +27,10 @@
             selectedAnnotationIds: new Set(),
             dirtyImages: new Set(),
             projectSettings: {
+                schemaVersion: 1,
+                projectId: '',
+                taskType: 'bounding_box',
+                manifestPath: 'project_manifest.json',
                 annotationOutputDir: 'annotations',
                 annotationDirDisplay: 'annotations',
                 annotationFormat: 'csv',

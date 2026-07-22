@@ -187,6 +187,37 @@ def test_annotation_codecs_round_trip_supported_formats():
         assert.strictEqual(staleCoco.annotations[0].source, 'sam');
         assert.strictEqual(staleCoco.annotations[0].predicted_iou, 0.91);
 
+        const stableClasses = [
+            { id: 9, name: 'nucleus', color: '#39d353', hotkey: 'n' },
+            { id: 4, name: 'cell membrane', color: '#58a6ff', hotkey: 'm' }
+        ];
+        const stableYolo = codecs.buildAnnotationExport(
+            imageRecord.name,
+            annotations,
+            'yolo',
+            imageRecord,
+            { classes: stableClasses }
+        ).content;
+        assert.deepStrictEqual(stableYolo.trim().split(/\r?\n/).map(line => line.split(' ')[0]), ['8', '3']);
+        const parsedStableYolo = codecs.parseAnnotationFile(stableYolo, 'yolo', imageRecord, {
+            classes: stableClasses,
+            imageNames: [imageRecord.name]
+        });
+        assert.deepStrictEqual(plain(parsedStableYolo.annotations.map(item => item.class)), [
+            'nucleus',
+            'cell membrane'
+        ]);
+
+        const stableCoco = JSON.parse(codecs.buildAnnotationExport(
+            imageRecord.name,
+            annotations,
+            'coco',
+            imageRecord,
+            { classes: stableClasses }
+        ).content);
+        assert.deepStrictEqual(stableCoco.categories.map(category => category.id), [9, 4]);
+        assert.deepStrictEqual(stableCoco.annotations.map(annotation => annotation.category_id), [9, 4]);
+
         for (const format of ['csv', 'csv_rich', 'yolo', 'coco', 'voc']) {
             const exported = codecs.buildAnnotationExport(
                 imageRecord.name,

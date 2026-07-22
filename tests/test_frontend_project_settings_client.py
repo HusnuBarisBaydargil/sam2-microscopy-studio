@@ -193,6 +193,10 @@ def test_project_settings_client_exports_expected_normalization_behavior():
 
         const normalizedProjectSettings = settings.normalizeProjectSettingsForClient(
             {
+                schema_version: 1,
+                project_id: '617abb01-cea9-48d1-9a8c-660850cd309a',
+                task_type: 'bounding_box',
+                manifest_path: 'project_manifest.json',
                 annotation_output_dir: 'labels',
                 annotation_dir_display: 'labels',
                 annotation_format: 'coco',
@@ -203,6 +207,10 @@ def test_project_settings_client_exports_expected_normalization_behavior():
             { annotationFormat: 'csv' }
         );
         assert.strictEqual(normalizedProjectSettings.annotationOutputDir, 'labels');
+        assert.strictEqual(normalizedProjectSettings.schemaVersion, 1);
+        assert.strictEqual(normalizedProjectSettings.projectId, '617abb01-cea9-48d1-9a8c-660850cd309a');
+        assert.strictEqual(normalizedProjectSettings.taskType, 'bounding_box');
+        assert.strictEqual(normalizedProjectSettings.manifestPath, 'project_manifest.json');
         assert.strictEqual(normalizedProjectSettings.annotationFormat, 'coco');
         assert.strictEqual(normalizedProjectSettings.privacy.phiSafeMode, true);
         assert.strictEqual(normalizedProjectSettings.samSettings.params.points_per_side, 48);

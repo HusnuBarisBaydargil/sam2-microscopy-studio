@@ -18,6 +18,8 @@ env/
 annotations/
 project_settings.json
 project_classes.json
+project_manifest.json
+pytest_project_manifest.json
 *.bak
 .tmp/
 

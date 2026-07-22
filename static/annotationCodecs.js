@@ -97,10 +97,12 @@
     function classesForExport(annotations, existingClasses = []) {
         const classes = normalizeClassList(existingClasses);
         const names = new Set(classes.map(cls => cls.name));
+        let nextClassId = classes.reduce((maximum, cls) => Math.max(maximum, cls.id || 0), 0) + 1;
         annotations.forEach(annotation => {
             const name = normalizeClassName(String(annotation.class || 'Unlabeled')) || 'Unlabeled';
             if (names.has(name)) return;
             classes.push({
+                id: nextClassId++,
                 name,
                 color: CLASS_COLOR_PALETTE[classes.length % CLASS_COLOR_PALETTE.length],
                 hotkey: ''
@@ -117,16 +119,23 @@
     function normalizeClassList(classes) {
         const normalized = [];
         const names = new Set();
+        const ids = new Set();
         if (!Array.isArray(classes)) return normalized;
 
         classes.forEach((cls, index) => {
             const name = normalizeClassName(typeof cls === 'string' ? cls : cls?.name);
             if (!name || names.has(name)) return;
-            normalized.push({
+            const normalizedClass = {
                 name,
                 color: cls?.color || CLASS_COLOR_PALETTE[index % CLASS_COLOR_PALETTE.length],
                 hotkey: String(cls?.hotkey || '').trim().slice(0, 1).toLowerCase()
-            });
+            };
+            const classId = Number(cls?.id);
+            if (Number.isInteger(classId) && classId > 0 && !ids.has(classId)) {
+                normalizedClass.id = classId;
+                ids.add(classId);
+            }
+            normalized.push(normalizedClass);
             names.add(name);
         });
         return normalized;
@@ -134,8 +143,14 @@
 
     function classIndexByName(classes) {
         const indexByName = new Map();
-        classes.forEach((cls, index) => indexByName.set(cls.name, index));
+        classes.forEach((cls, index) => indexByName.set(cls.name, (cls.id || index + 1) - 1));
         return indexByName;
+    }
+
+    function categoryIdByName(classes) {
+        const idByName = new Map();
+        classes.forEach((cls, index) => idByName.set(cls.name, cls.id || index + 1));
+        return idByName;
     }
 
     function normalizeContour(contour) {
@@ -299,7 +314,7 @@
     function buildAnnotationCoco(sourceImageName, annotations, imageRecord, existingClasses = []) {
         const size = imageDimensions(imageRecord) || { width: 0, height: 0 };
         const classes = classesForExport(annotations, existingClasses);
-        const indexByName = classIndexByName(classes);
+        const categoryIds = categoryIdByName(classes);
         const payload = {
             images: [{
                 id: 1,
@@ -307,11 +322,11 @@
                 width: size.width,
                 height: size.height
             }],
-            categories: classes.map((cls, index) => ({ id: index + 1, name: cls.name })),
+            categories: classes.map((cls, index) => ({ id: cls.id || index + 1, name: cls.name })),
             annotations: annotations.map((annotation, index) => {
                 const [x, y, w, h] = annotation.bbox;
                 const className = normalizeClassName(String(annotation.class || 'Unlabeled')) || 'Unlabeled';
-                const categoryId = (indexByName.has(className) ? indexByName.get(className) : 0) + 1;
+                const categoryId = categoryIds.get(className) || 1;
                 const metadata = annotationMaskMetadata(annotation);
                 const segmentation = cocoSegmentationFromContour(metadata.contour);
                 const cocoAnnotation = {
@@ -472,7 +487,8 @@
             ]);
             if (!Number.isInteger(classIndex) || !bbox) return;
 
-            const className = classes[classIndex]?.name || `class_${classIndex}`;
+            const stableClass = classes.find(cls => Number(cls?.id) - 1 === classIndex);
+            const className = stableClass?.name || classes[classIndex]?.name || `class_${classIndex}`;
             annotations.push({
                 id: index + 1,
                 bbox,

@@ -102,6 +102,7 @@ def test_class_manager_exports_expected_class_logic():
 
         const newClass = manager.buildNewClass('cytoplasm', classes);
         assert.deepStrictEqual(plain(newClass), {
+            id: 3,
             name: 'cytoplasm',
             color: '#58a6ff',
             hotkey: 'y'
@@ -139,8 +140,25 @@ def test_class_manager_exports_expected_class_logic():
         ]);
         assert.deepStrictEqual(plain(ensured.classes), [
             { name: 'nucleus', color: '#39d353', hotkey: 'n' },
-            { name: 'membrane', color: '#9ca3af', hotkey: 'm' },
-            { name: 'Unlabeled', color: '#58a6ff', hotkey: 'u' }
+            { id: 2, name: 'membrane', color: '#9ca3af', hotkey: 'm' },
+            { id: 3, name: 'Unlabeled', color: '#58a6ff', hotkey: 'u' }
+        ]);
+        assert.strictEqual(ensured.nextClassId, 4);
+
+        const afterDeletion = manager.buildNewClass(
+            'replacement',
+            [{ id: 1, name: 'first', color: '#39d353', hotkey: 'f' }],
+            5
+        );
+        assert.strictEqual(afterDeletion.id, 5);
+
+        const stableClasses = manager.normalizeClassList([
+            { id: 8, name: 'later', color: '#123456' },
+            { id: 3, name: 'earlier', color: '#654321' }
+        ]);
+        assert.deepStrictEqual(plain(stableClasses.map(cls => [cls.id, cls.name])), [
+            [8, 'later'],
+            [3, 'earlier']
         ]);
         """
     )

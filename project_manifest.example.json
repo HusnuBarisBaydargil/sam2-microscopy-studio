@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "project_id": "9d6a71ce-04de-4cb0-a7be-13392d8627aa",
+  "task_type": "bounding_box",
+  "next_class_id": 3,
+  "settings": {
+    "annotation_output_dir": "annotations",
+    "annotation_format": "csv",
+    "sam_device": "auto",
+    "sam_settings": {
+      "preset": "cell_1920x1440",
+      "params": {
+        "points_per_side": 64,
+        "crop_n_layers": 2,
+        "min_mask_region_area": 400,
+        "crop_overlap_ratio": 0.4,
+        "crop_n_points_downscale_factor": 2,
+        "points_per_batch": 64,
+        "pred_iou_thresh": 0.92,
+        "stability_score_thresh": 0.92,
+        "stability_score_offset": 1.0,
+        "box_nms_thresh": 0.5,
+        "crop_nms_thresh": 0.5,
+        "use_m2m": true,
+        "area_mode": "pixels",
+        "min_overall_area": 300,
+        "max_overall_area": 30000
+      }
+    }
+  },
+  "classes": [
+    {
+      "id": 1,
+      "name": "nucleus",
+      "color": "#39d353",
+      "hotkey": "n"
+    },
+    {
+      "id": 2,
+      "name": "cell",
+      "color": "#58a6ff",
+      "hotkey": "c"
+    }
+  ]
+}

@@ -37,7 +37,6 @@ from annotation_paths import (
     resolve_annotation_match,
     safe_image_stem,
     safe_path_stem,
-    save_project_classes,
 )
 from atomic_io import recoverable_file_exists
 from image_io import (
@@ -58,7 +57,14 @@ from project_config import (
     normalize_project_settings,
     project_settings_path,
     resolve_annotation_dir,
-    save_project_settings,
+)
+from project_manifest import (
+    PROJECT_MANIFEST_SCHEMA_VERSION,
+    load_or_create_project_manifest,
+    project_manifest_path,
+    save_project_manifest,
+    update_manifest_classes,
+    update_manifest_settings,
 )
 from sam_service import (
     SamInferenceBusyError,
@@ -128,6 +134,7 @@ SAM_CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, "models", "sam2.1_hiera_large.p
 SAM_CONFIG_PATH = os.path.join(PROJECT_ROOT, "models", "sam2.1_hiera_l.yaml")
 DEFAULT_ANNOTATION_OUTPUT_DIR = os.environ.get("ANNOTATION_OUTPUT_DIR", "annotations")
 PROJECT_SETTINGS_FILE = os.environ.get("PROJECT_SETTINGS_FILE", "project_settings.json")
+PROJECT_MANIFEST_FILE = os.environ.get("PROJECT_MANIFEST_FILE", "project_manifest.json")
 PROJECT_CLASSES_FILE = "project_classes.json"
 API_AUTH_TOKEN = (os.environ.get("APP_API_TOKEN") or os.environ.get("API_TOKEN") or "").strip()
 PHI_SAFE_MODE = _truthy_env("PHI_SAFE_MODE", False)
@@ -136,6 +143,8 @@ ALLOW_ABSOLUTE_ANNOTATION_DIR = _truthy_env("ALLOW_ABSOLUTE_ANNOTATION_DIR", Fal
 SKIP_SAM_MODEL_LOAD = _truthy_env("SKIP_SAM_MODEL_LOAD", False)
 DEFAULT_ANNOTATION_FORMAT = os.environ.get("ANNOTATION_FORMAT", "csv").strip().lower()
 PROJECT_SETTINGS = None
+PROJECT_MANIFEST = None
+PROJECT_STATE_LOCK = threading.RLock()
 SAM_INFERENCE_SEMAPHORE = threading.BoundedSemaphore(SAM_MAX_CONCURRENT_REQUESTS)
 SAM_INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=SAM_MAX_CONCURRENT_REQUESTS)
 
@@ -184,6 +193,10 @@ def _annotation_dir():
 def _project_settings_path():
     return project_settings_path(PROJECT_ROOT, PROJECT_SETTINGS_FILE)
 
+
+def _project_manifest_path():
+    return project_manifest_path(PROJECT_ROOT, PROJECT_MANIFEST_FILE)
+
 def _normalize_project_settings(raw_settings=None):
     return normalize_project_settings(
         raw_settings,
@@ -200,29 +213,76 @@ def _load_project_settings():
         allow_absolute_annotation_dir=ALLOW_ABSOLUTE_ANNOTATION_DIR,
     )
 
-def _save_project_settings(settings):
-    return save_project_settings(
-        settings,
-        _project_settings_path(),
-        project_root=PROJECT_ROOT,
-        default_annotation_output_dir=DEFAULT_ANNOTATION_OUTPUT_DIR,
-        allow_absolute_annotation_dir=ALLOW_ABSOLUTE_ANNOTATION_DIR,
+def _legacy_project_classes_path(settings):
+    annotation_dir = _resolve_annotation_dir(
+        settings.get("annotation_output_dir") or DEFAULT_ANNOTATION_OUTPUT_DIR
     )
+    return project_classes_path(annotation_dir, PROJECT_CLASSES_FILE)
+
+
+def _manifest_options():
+    return {
+        "project_root": PROJECT_ROOT,
+        "default_annotation_output_dir": DEFAULT_ANNOTATION_OUTPUT_DIR,
+        "allow_absolute_annotation_dir": ALLOW_ABSOLUTE_ANNOTATION_DIR,
+    }
+
+
+def _project_manifest():
+    global PROJECT_MANIFEST, PROJECT_SETTINGS
+    with PROJECT_STATE_LOCK:
+        if PROJECT_MANIFEST is None:
+            legacy_settings = _load_project_settings()
+            legacy_classes = load_project_classes(_legacy_project_classes_path(legacy_settings))
+            PROJECT_MANIFEST = load_or_create_project_manifest(
+                _project_manifest_path(),
+                legacy_settings=legacy_settings,
+                legacy_classes=legacy_classes,
+                **_manifest_options(),
+            )
+            PROJECT_SETTINGS = PROJECT_MANIFEST["settings"]
+        return PROJECT_MANIFEST
+
+
+def _save_manifest(manifest):
+    global PROJECT_MANIFEST, PROJECT_SETTINGS
+    with PROJECT_STATE_LOCK:
+        PROJECT_MANIFEST = save_project_manifest(
+            manifest,
+            _project_manifest_path(),
+            **_manifest_options(),
+        )
+        PROJECT_SETTINGS = PROJECT_MANIFEST["settings"]
+        return PROJECT_MANIFEST
+
+
+def _save_project_settings(settings):
+    with PROJECT_STATE_LOCK:
+        manifest = update_manifest_settings(
+            _project_manifest(),
+            settings,
+            **_manifest_options(),
+        )
+        return _save_manifest(manifest)["settings"]
 
 def _project_settings():
     global PROJECT_SETTINGS
-    if PROJECT_SETTINGS is None:
-        PROJECT_SETTINGS = _load_project_settings()
+    if PROJECT_SETTINGS is None or PROJECT_MANIFEST is None:
+        PROJECT_SETTINGS = _project_manifest()["settings"]
     return PROJECT_SETTINGS
 
 def _project_settings_response():
     annotation_dir = _annotation_dir()
     sam_settings = normalize_sam_settings(_project_settings().get("sam_settings"))
     return {
+        "schema_version": PROJECT_MANIFEST_SCHEMA_VERSION,
+        "project_id": _project_manifest()["project_id"],
+        "task_type": _project_manifest()["task_type"],
+        "manifest_path": _public_settings_path(_project_manifest_path()),
         "annotation_output_dir": _project_settings().get("annotation_output_dir"),
         "annotation_dir": None if PHI_SAFE_MODE else annotation_dir,
         "annotation_dir_display": _public_annotation_dir_display(annotation_dir),
-        "settings_path": _public_settings_path(_project_settings_path()),
+        "settings_path": _public_settings_path(_project_manifest_path()),
         "annotation_format": _project_settings().get("annotation_format", "csv"),
         "annotation_formats": [
             {"key": key, **metadata}
@@ -312,7 +372,7 @@ def _annotation_candidate_paths(image_name, image_path=None, annotation_format="
     )
 
 def _project_classes_path():
-    return project_classes_path(_annotation_dir(), PROJECT_CLASSES_FILE)
+    return _project_manifest_path()
 
 def _display_path(path):
     try:
@@ -343,10 +403,12 @@ def _resolve_annotation_match(image_info, duplicate_stems=None, annotation_forma
     )
 
 def _save_project_classes(classes):
-    save_project_classes(classes, _project_classes_path())
+    with PROJECT_STATE_LOCK:
+        manifest = update_manifest_classes(_project_manifest(), classes)
+        return _save_manifest(manifest)["classes"]
 
 def _load_project_classes():
-    return load_project_classes(_project_classes_path())
+    return [dict(class_info) for class_info in _project_manifest()["classes"]]
 
 sam_model_handler = SAMModelHandler(
     SAM_CONFIG_PATH,
@@ -446,19 +508,30 @@ def load_classes_endpoint():
     if request.method == "GET":
         return jsonify({
             "classes": _load_project_classes(),
+            "next_class_id": _project_manifest()["next_class_id"],
             "classes_path": _public_annotation_path(_project_classes_path()),
         })
 
     data = request.get_json(silent=True) or {}
     try:
         classes = _normalize_classes(data.get("classes", []))
-        _save_project_classes(classes)
+        classes = _save_project_classes(classes)
         return jsonify({
             "classes": classes,
+            "next_class_id": _project_manifest()["next_class_id"],
             "classes_path": _public_annotation_path(_project_classes_path()),
         })
     except Exception as e:
         return jsonify({"error": f"Failed to save project classes: {e}"}), 500
+
+
+@project_bp.route("/manifest", methods=["GET"])
+def project_manifest_endpoint():
+    manifest = _project_manifest()
+    return jsonify({
+        **manifest,
+        "manifest_path": _public_settings_path(_project_manifest_path()),
+    })
 
 @project_bp.route("/settings", methods=["GET", "POST"])
 def project_settings_endpoint():
@@ -729,7 +802,7 @@ def save_annotations_endpoint():
                 "format": annotation_format,
             }), 409
 
-        _save_project_classes(classes)
+        classes = _save_project_classes(classes)
         _write_annotation_file(
             path,
             _public_image_name(image_name, image_path),

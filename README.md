@@ -31,7 +31,8 @@ scripts/check_setup.py         Environment/model sanity check
 tests/                         Unit, API, and static UI contract tests
 requirements.txt               Runtime dependencies
 requirements-dev.txt           Test/dev dependencies
-project_settings.example.json  Example runtime settings shape
+project_manifest.example.json  Example versioned project manifest
+project_settings.example.json  Legacy settings example used during migration
 Dockerfile                     Optional container runtime
 ```
 
@@ -135,7 +136,7 @@ The UI separates annotation file handling into two scopes:
 
 Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format.
 
-Server-side annotations, project classes, and project settings are written atomically. After a file has been saved more than once, its previous validated version is retained beside it with a `.bak` suffix. If the primary file is missing or invalid, the application reads the backup automatically; the next successful save replaces the primary while preserving a valid recovery copy.
+Server-side annotations and the project manifest are written atomically. The versioned manifest is the canonical project record and contains the stable project UUID, task type, settings, and classes with persistent numeric IDs. Existing `project_settings.json` and `project_classes.json` files are migrated automatically when the first manifest is created. After a file has been saved more than once, its previous validated version is retained beside it with a `.bak` suffix. If the primary file is missing or invalid, the application reads the backup automatically; the next successful save replaces the primary while preserving a valid recovery copy.
 
 Class hotkeys apply the selected class to the current candidate or annotation selection. One-click accept is shown as an active canvas badge when enabled.
 
@@ -204,7 +205,8 @@ Environment variables:
 - `PHI_HASH_SALT`: optional secret salt for stable PHI-safe image IDs.
 - `ANNOTATION_OUTPUT_DIR`: default annotation folder. Defaults to `annotations`.
 - `ANNOTATION_FORMAT`: default annotation format: `csv`, `csv_rich`, `yolo`, `coco`, or `voc`. `csv` writes simple box labels; `csv_rich` preserves SAM2 metadata.
-- `PROJECT_SETTINGS_FILE`: runtime project settings file. Defaults to `project_settings.json`.
+- `PROJECT_MANIFEST_FILE`: canonical versioned project manifest. Defaults to `project_manifest.json`.
+- `PROJECT_SETTINGS_FILE`: legacy runtime settings file used only when migrating a project without a manifest. Defaults to `project_settings.json`.
 - `ALLOWED_CORS_ORIGINS`: comma-separated allowed origins.
 - `MAX_UPLOAD_MB`: request size limit in MB.
 - `MAX_DECODED_IMAGE_PIXELS`: decoded image pixel limit for load, preprocessing, and SAM requests. Defaults to `25000000`.
@@ -217,7 +219,7 @@ Environment variables:
 - `ALLOW_ABSOLUTE_ANNOTATION_DIR`: set to `1` only if absolute annotation paths are required.
 - `SKIP_SAM_MODEL_LOAD`: set to `1` for tests or API work that should not load the SAM2 checkpoint.
 
-`project_settings.json` is local runtime state and is ignored by git. Use `project_settings.example.json` as the checked-in reference.
+`project_manifest.json` is local runtime state and is ignored by git. Use `project_manifest.example.json` as the checked-in reference. The manifest currently uses schema version `1` and task type `bounding_box`.
 
 ## Security And Privacy
 
@@ -252,9 +254,9 @@ In PHI-safe mode, original filenames and folder paths remain internal for matchi
 
 CSV saves one file per image as `*_annotations.csv`. CSV export neutralizes spreadsheet formulas in text fields.
 
-YOLO saves one `.txt` file per image using normalized `class_id x_center y_center width height` rows. Class IDs follow the current project class order.
+YOLO saves one `.txt` file per image using normalized `class_id x_center y_center width height` rows. YOLO class IDs are the manifest class ID minus one, so renaming or reordering classes does not change exported IDs. Deleted IDs are not reused and gaps may therefore remain.
 
-COCO saves one JSON dataset file per image with `images`, `categories`, and `annotations`. SAM contours are exported as polygon `segmentation` when present.
+COCO saves one JSON dataset file per image with `images`, `categories`, and `annotations`. Category IDs come directly from stable manifest class IDs. SAM contours are exported as polygon `segmentation` when present.
 
 Pascal VOC saves one XML file per image with `object/bndbox` entries.
 

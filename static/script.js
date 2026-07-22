@@ -1134,9 +1134,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return existingClass.name;
         }
 
-        const newClass = classManagerLogic.buildNewClass(className, appState.classes);
+        const newClass = classManagerLogic.buildNewClass(className, appState.classes, appState.nextClassId);
 
         appState.classes.push(newClass);
+        appState.nextClassId = Math.max(appState.nextClassId, newClass.id + 1);
         scheduleProjectClassesSave();
         renderClassControls(select ? newClass.name : classificationSelect.value);
         quickClassInput.value = '';
@@ -2708,6 +2709,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (Array.isArray(data.classes)) {
+                appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 applyLoadedClasses(data.classes);
             }
         } catch (error) {
@@ -2730,6 +2732,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (data.error) throw new Error(data.error);
+            if (Array.isArray(data.classes)) {
+                appState.classes = normalizeClassList(data.classes);
+                appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
+                renderClassControls(classificationSelect.value);
+            }
             if (!silent) {
                 const msg = `Saved ${appState.classes.length} project classes.`;
                 updateStatus(msg);
@@ -2779,6 +2786,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyLoadedClasses(classes) {
         const normalizedClasses = normalizeClassList(classes);
         appState.classes = normalizedClasses;
+        appState.nextClassId = Math.max(
+            appState.nextClassId,
+            normalizedClasses.reduce((maximum, classInfo) => Math.max(maximum, classInfo.id || 0), 0) + 1
+        );
         const addedClassCount = ensureClassesForAnnotations(currentAnnotations());
         if (addedClassCount > 0) scheduleProjectClassesSave();
         renderClassControls(classificationSelect.value);
@@ -2996,8 +3007,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function ensureClassesForAnnotations(annotations) {
-        const result = classManagerLogic.ensureClassesForAnnotations(appState.classes, annotations);
+        const result = classManagerLogic.ensureClassesForAnnotations(
+            appState.classes,
+            annotations,
+            appState.nextClassId
+        );
         appState.classes = result.classes;
+        appState.nextClassId = result.nextClassId;
         return result.addedCount;
     }
 

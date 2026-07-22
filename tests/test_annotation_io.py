@@ -4,7 +4,9 @@ import json
 from annotation_io import (
     _clamp_annotations_to_image,
     _normalize_annotation_payload,
+    _read_annotation_file,
     _write_annotation_coco,
+    _write_annotation_file,
 )
 
 
@@ -74,3 +76,32 @@ def test_coco_writer_does_not_export_inconsistent_mask_geometry(monkeypatch):
     assert "mask_area" not in annotation
     assert annotation["area"] == 800.0
     assert annotation["source"] == "sam2"
+
+
+def test_yolo_and_coco_use_stable_manifest_class_ids(tmp_path):
+    classes = [
+        {"id": 9, "name": "nucleus", "color": "#39d353", "hotkey": "n"},
+        {"id": 4, "name": "membrane", "color": "#58a6ff", "hotkey": "m"},
+    ]
+    annotations = [
+        _sam_annotation(),
+        _sam_annotation(
+            id=2,
+            bbox=[80, 20, 10, 10],
+            contour=None,
+            mask_area=None,
+            **{"class": "membrane"},
+        ),
+    ]
+
+    yolo_path = tmp_path / "cells.txt"
+    _write_annotation_file(yolo_path, "cells.png", annotations, "yolo", (200, 100), classes)
+    assert [line.split()[0] for line in yolo_path.read_text(encoding="utf-8").splitlines()] == ["8", "3"]
+    loaded_yolo = _read_annotation_file(yolo_path, "yolo", "cells.png", (200, 100), classes)
+    assert [annotation["class"] for annotation in loaded_yolo] == ["nucleus", "membrane"]
+
+    coco_path = tmp_path / "cells.json"
+    _write_annotation_file(coco_path, "cells.png", annotations, "coco", (200, 100), classes)
+    coco = json.loads(coco_path.read_text(encoding="utf-8"))
+    assert [category["id"] for category in coco["categories"]] == [9, 4]
+    assert [annotation["category_id"] for annotation in coco["annotations"]] == [9, 4]
