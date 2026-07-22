@@ -49,6 +49,7 @@
         resetPreprocessSettingsBtn: 'resetPreprocessSettingsBtn',
         manualAnnotationBtn: 'manualAnnotationBtn',
         undoBtn: 'undoBtn',
+        redoBtn: 'redoBtn',
         exportAnnotationFileBtn: 'exportAnnotationFileBtn',
         loadAnnotationFileBtn: 'loadAnnotationFileBtn',
         loadAnnotationFileInput: 'loadAnnotationFileInput',

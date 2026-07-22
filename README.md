@@ -11,7 +11,7 @@ The project runs as a local browser UI backed by a Python server. SAM2 inference
 - Review SAM candidates with contour-based hit testing.
 - Convert SAM candidates to final annotations with batch apply or one-click active-class accept.
 - Preserve SAM metadata including contour, mask area, source, predicted IoU, and stability score.
-- Draw manual boxes, edit boxes, nudge boxes, undo geometry/class changes, and clamp boxes to image bounds.
+- Draw manual boxes, edit and nudge boxes, and undo or redo annotation creation, deletion, SAM acceptance, relabeling, and geometry changes.
 - Manage class names, colors, and hotkeys that apply classes to the current selection.
 - Save/load annotations on the server with duplicate filename handling.
 - Match annotation files across a loaded folder, or import one annotation file into the current image.

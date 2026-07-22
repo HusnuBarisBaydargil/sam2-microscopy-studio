@@ -20,6 +20,8 @@ STATE_STORE_CALLS = [
     "stateStore.setCurrentCandidates(",
     "stateStore.currentHistory(",
     "stateStore.setCurrentHistory(",
+    "stateStore.currentRedoHistory(",
+    "stateStore.setCurrentRedoHistory(",
     "stateStore.currentDisplayImage(",
     "stateStore.markCurrentImageDirty(",
     "stateStore.resetInteractionState(",
@@ -111,6 +113,7 @@ def test_state_store_exports_expected_state_behavior():
         assert.deepStrictEqual(plain(store.currentAnnotations(state)), []);
         assert.deepStrictEqual(plain(store.currentCandidates(state)), []);
         assert.deepStrictEqual(plain(store.currentHistory(state)), []);
+        assert.deepStrictEqual(plain(store.currentRedoHistory(state)), []);
 
         const otherState = store.createAppState();
         state.projectSettings.samSettings.params.points_per_side = 123;
@@ -129,9 +132,11 @@ def test_state_store_exports_expected_state_behavior():
         store.setCurrentAnnotations(state, [{ id: 1 }]);
         store.setCurrentCandidates(state, [{ id: 'cand_1' }]);
         store.setCurrentHistory(state, [{ type: 'batch' }]);
+        store.setCurrentRedoHistory(state, [{ type: 'redo' }]);
         assert.deepStrictEqual(plain(store.currentAnnotations(state)), [{ id: 1 }]);
         assert.deepStrictEqual(plain(store.currentCandidates(state)), [{ id: 'cand_1' }]);
         assert.deepStrictEqual(plain(store.currentHistory(state)), [{ type: 'batch' }]);
+        assert.deepStrictEqual(plain(store.currentRedoHistory(state)), [{ type: 'redo' }]);
         assert.strictEqual(store.currentDisplayImage(state, () => true), processedImage);
         assert.strictEqual(store.currentDisplayImage(state, () => false), originalImage);
 
@@ -168,6 +173,7 @@ def test_state_store_exports_expected_state_behavior():
         assert.strictEqual(state.images.length, 0);
         assert.strictEqual(state.currentImage, null);
         assert.strictEqual(state.annotationsByImage.size, 0);
+        assert.strictEqual(state.annotationRedoByImage.size, 0);
         assert.strictEqual(state.dirtyImages.size, 0);
         assert.strictEqual(state.matchSummary, null);
         assert.strictEqual(state.imageQueueFilter, 'all');

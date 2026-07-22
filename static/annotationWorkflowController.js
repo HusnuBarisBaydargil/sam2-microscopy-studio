@@ -305,12 +305,26 @@
     }) {
         if (!imageRecord) return [];
 
+        const previousAnnotations = state.annotationsByImage.get(imageRecord.id) || [];
         const normalizedAnnotations = annotations
             .map(annotation => normalizeAnnotation(annotation, imageRecord))
             .filter(Boolean);
 
         state.annotationsByImage.set(imageRecord.id, normalizedAnnotations);
-        state.annotationHistoryByImage.set(imageRecord.id, []);
+        if (markDirty) {
+            const history = state.annotationHistoryByImage.get(imageRecord.id) || [];
+            const redoHistory = state.annotationRedoByImage.get(imageRecord.id) || [];
+            state.annotationHistoryByImage.set(imageRecord.id, history);
+            state.annotationRedoByImage.set(imageRecord.id, redoHistory);
+            annotationController.recordHistoryCommand(history, redoHistory, {
+                type: 'replace_annotations',
+                beforeRecords: previousAnnotations.map((item, index) => ({ item, index })),
+                afterRecords: normalizedAnnotations.map((item, index) => ({ item, index }))
+            });
+        } else {
+            state.annotationHistoryByImage.set(imageRecord.id, []);
+            state.annotationRedoByImage.set(imageRecord.id, []);
+        }
         state.annotationCounter = Math.max(
             state.annotationCounter,
             ...normalizedAnnotations.map(annotation => annotation.id),

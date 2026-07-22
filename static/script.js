@@ -185,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
         resetPreprocessSettingsBtn,
         manualAnnotationBtn,
         undoBtn,
+        redoBtn,
         exportAnnotationFileBtn,
         loadAnnotationFileBtn,
         loadAnnotationFileInput,
@@ -344,7 +345,8 @@ document.addEventListener('DOMContentLoaded', () => {
             applyInspectorBoxEdit();
         });
     });
-    undoBtn.addEventListener('click', handleUndoBatch);
+    undoBtn.addEventListener('click', handleUndoAction);
+    redoBtn.addEventListener('click', handleRedoAction);
     exportAnnotationFileBtn.addEventListener('click', handleExportAnnotationFile);
     loadAnnotationFileBtn.addEventListener('click', () => {
         if (appState.currentImage) loadAnnotationFileInput.click();
@@ -887,6 +889,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
 
             setCurrentCandidates(candidateAnnotations);
+            setCurrentRedoHistory([]);
             appState.selectedCandidateIds.clear();
             if (!keepExistingAnnotations) {
                 setCurrentAnnotations([]);
@@ -929,6 +932,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         setCurrentCandidates([]);
+        setCurrentRedoHistory([]);
         appState.selectedCandidateIds.clear();
         imageRecord.samHasRun = false;
 
@@ -952,11 +956,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const historyStart = currentHistory().length;
         const relabeledCount = relabelSelectedAnnotations(className);
         const convertedCount = convertSelectedCandidates(className);
         const totalCount = relabeledCount + convertedCount;
 
         if (totalCount === 0) return;
+
+        annotationController.groupHistoryCommands(currentHistory(), historyStart, 'class application');
 
         markCurrentImageDirty();
         updateAnnotationLog();
@@ -978,6 +985,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentCandidates(),
             currentAnnotations(),
             currentHistory(),
+            currentRedoHistory(),
             className,
             clampBboxToImage
         );
@@ -1007,14 +1015,16 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(msg, 'error');
             return false;
         }
+        const annotationIndex = currentAnnotations().length;
+        const candidateIndex = currentCandidates().findIndex(item => item.id === candidate.id);
         currentAnnotations().push(newAnnotation);
         setCurrentCandidates(currentCandidates().filter(item => item.id !== candidate.id));
         appState.selectedCandidateIds.delete(candidate.id);
         appState.selectedAnnotationIds.clear();
-        currentHistory().push({
+        annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
             type: 'convert_candidates',
-            convertedAnnotations: [newAnnotation],
-            originalCandidates: [candidate]
+            annotationRecords: [{ item: newAnnotation, index: annotationIndex }],
+            candidateRecords: [{ item: candidate, index: candidateIndex }]
         });
         markCurrentImageDirty();
         updateAnnotationLog();
@@ -1033,18 +1043,58 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAnnotations(),
             appState.selectedAnnotationIds,
             currentHistory(),
+            currentRedoHistory(),
             className
         );
     }
 
-    function handleUndoBatch() {
-        const msg = annotationController.undoLastBatch(
+    function handleUndoAction() {
+        const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
+        const msg = annotationController.undoLastAction(
             currentAnnotations(),
             currentCandidates(),
-            currentHistory()
+            currentHistory(),
+            currentRedoHistory(),
+            appState.classes
         );
         if (!msg) return;
 
+        if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
+            scheduleProjectClassesSave();
+            renderClassControls(classificationSelect.value);
+        }
+
+        appState.selectedAnnotationIds.clear();
+        appState.selectedCandidateIds.clear();
+
+        updateAnnotationLog();
+        markCurrentImageDirty();
+        renderImageBrowser();
+        updateAnnotationInspector();
+        updateStatus(msg);
+        showToast(msg, 'info');
+        draw();
+        updateButtonStates();
+    }
+
+    function handleRedoAction() {
+        const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
+        const msg = annotationController.redoLastAction(
+            currentAnnotations(),
+            currentCandidates(),
+            currentHistory(),
+            currentRedoHistory(),
+            appState.classes
+        );
+        if (!msg) return;
+
+        if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
+            scheduleProjectClassesSave();
+            renderClassControls(classificationSelect.value);
+        }
+
+        appState.selectedAnnotationIds.clear();
+        appState.selectedCandidateIds.clear();
         updateAnnotationLog();
         markCurrentImageDirty();
         renderImageBrowser();
@@ -1180,6 +1230,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         classInfo.name = newName;
         const changedCount = renameAnnotationClass(oldName, newName);
+        if (changedCount > 0) clearAllAnnotationHistory();
         scheduleProjectClassesSave();
         renderClassControls(newName);
         updateAnnotationLog();
@@ -1226,12 +1277,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const keepClassForOtherImages = countOtherImageAnnotationsWithClass(classToDelete.name) > 0;
 
+        const historyStart = currentHistory().length;
         const deletedCount = deleteCurrentImageAnnotationsWithClass(classToDelete.name);
 
         if (!keepClassForOtherImages) {
             appState.classes.splice(index, 1);
+            annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
+                type: 'remove_class',
+                classRecord: { item: classToDelete, index }
+            });
             scheduleProjectClassesSave();
         }
+
+        annotationController.groupHistoryCommands(currentHistory(), historyStart, 'class deletion');
 
         const preferredClass = !keepClassForOtherImages && classificationSelect.value === classToDelete.name
             ? ''
@@ -1423,7 +1481,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (changes.length > 0) {
             annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
-            currentHistory().push({ type: 'geometry_edit', changes });
+            annotationController.recordHistoryCommand(
+                currentHistory(),
+                currentRedoHistory(),
+                { type: 'geometry_edit', changes }
+            );
             markCurrentImageDirty();
             renderImageBrowser();
             updateAnnotationLog();
@@ -1458,7 +1520,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (changes.length === 0) return;
 
         annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
-        currentHistory().push({ type: 'geometry_edit', changes });
+        annotationController.recordHistoryCommand(
+            currentHistory(),
+            currentRedoHistory(),
+            { type: 'geometry_edit', changes }
+        );
         markCurrentImageDirty();
         renderImageBrowser();
         updateAnnotationLog();
@@ -1654,7 +1720,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (error) throw new Error(error);
             if (!newAnnotation) return;
 
+            const annotationIndex = currentAnnotations().length;
             currentAnnotations().push(newAnnotation);
+            annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
+                type: 'create_annotations',
+                annotationRecords: [{ item: newAnnotation, index: annotationIndex }]
+            });
             markCurrentImageDirty();
 
             const msg = `Added manual annotation #${newAnnotation.id} as '${className}'.`;
@@ -1695,19 +1766,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function deleteAnnotationById(idToDelete) {
         annotationLogController.hideContextMenu(annotationLogRefs());
-        const deletedAnnotation = annotationController.deleteAnnotationById(
+        const deletedAnnotations = annotationController.deleteAnnotationsByIds(
             currentAnnotations(),
             currentCandidates(),
             currentHistory(),
+            currentRedoHistory(),
             appState.selectedAnnotationIds,
-            idToDelete
+            [idToDelete]
         );
-        if (!deletedAnnotation) return;
+        if (deletedAnnotations.length === 0) return;
 
         appState.logItemToModify = null;
         markCurrentImageDirty();
 
-        const msg = `Deleted annotation #${deletedAnnotation.id}.`;
+        const msg = `Deleted annotation #${deletedAnnotations[0].id}.`;
         updateStatus(msg);
         showToast(msg, 'info');
         updateAnnotationLog();
@@ -1766,7 +1838,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.key === 'Delete') {
             event.preventDefault();
             const selectedIds = Array.from(appState.selectedAnnotationIds);
-            selectedIds.forEach(id => deleteAnnotationById(id));
+            const deletedAnnotations = annotationController.deleteAnnotationsByIds(
+                currentAnnotations(),
+                currentCandidates(),
+                currentHistory(),
+                currentRedoHistory(),
+                appState.selectedAnnotationIds,
+                selectedIds
+            );
+            if (deletedAnnotations.length > 0) {
+                markCurrentImageDirty();
+                appState.logItemToModify = null;
+                updateStatus(`Deleted ${deletedAnnotations.length} selected annotation${deletedAnnotations.length === 1 ? '' : 's'}.`);
+                updateAnnotationLog();
+                renderImageBrowser();
+                draw();
+                updateButtonStates();
+            }
+            return;
+        }
+
+        const undoShortcut = event.key.toLowerCase() === 'u'
+            || (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z');
+        const redoShortcut = event.ctrlKey
+            && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'));
+        if (redoShortcut) {
+            event.preventDefault();
+            handleRedoAction();
+            return;
+        }
+        if (undoShortcut) {
+            event.preventDefault();
+            handleUndoAction();
             return;
         }
 
@@ -1777,12 +1880,6 @@ document.addEventListener('DOMContentLoaded', () => {
             event.preventDefault();
             const step = event.shiftKey ? 10 : 1;
             nudgeSelectedAnnotations(arrowDelta.dx * step, arrowDelta.dy * step);
-            return;
-        }
-
-        if (event.key.toLowerCase() === 'u') {
-            event.preventDefault();
-            handleUndoBatch();
             return;
         }
 
@@ -2779,10 +2876,11 @@ document.addEventListener('DOMContentLoaded', () => {
         annotation.bbox = newBbox;
         const changes = [{ id: annotation.id, oldBbox, newBbox: newBbox.slice() }];
         annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
-        currentHistory().push({
-            type: 'geometry_edit',
-            changes
-        });
+        annotationController.recordHistoryCommand(
+            currentHistory(),
+            currentRedoHistory(),
+            { type: 'geometry_edit', changes }
+        );
         markCurrentImageDirty();
         renderImageBrowser();
         updateAnnotationLog();
@@ -2848,6 +2946,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 oneClickAcceptInput,
                 quickClassInput,
                 quickAddClassBtn,
+                redoBtn,
                 undoBtn,
                 exportAnnotationFileBtn,
                 loadAnnotationFileBtn,
@@ -2871,6 +2970,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 samHasRun: Boolean(appState.currentImage?.samHasRun),
                 selectionExists,
                 historyExists: currentHistory().length > 0,
+                redoExists: currentRedoHistory().length > 0,
                 annotationsExist: currentAnnotations().length > 0,
                 candidatesExist: currentCandidates().length > 0,
                 classesExist: appState.classes.length > 0,
@@ -2930,20 +3030,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function deleteCurrentImageAnnotationsWithClass(className) {
-        const { deletedCount, remainingAnnotations } = annotationController.deleteAnnotationsWithClass(
+        const idsToDelete = currentAnnotations()
+            .filter(annotation => annotation.class === className)
+            .map(annotation => annotation.id);
+        const deletedAnnotations = annotationController.deleteAnnotationsByIds(
             currentAnnotations(),
-            className
+            currentCandidates(),
+            currentHistory(),
+            currentRedoHistory(),
+            appState.selectedAnnotationIds,
+            idsToDelete
         );
 
-        if (deletedCount > 0) {
-            setCurrentAnnotations(remainingAnnotations);
-            setCurrentHistory([]);
-            markCurrentImageDirty();
-        }
+        if (deletedAnnotations.length > 0) markCurrentImageDirty();
 
         appState.selectedAnnotationIds.clear();
         appState.logItemToModify = null;
-        return deletedCount;
+        return deletedAnnotations.length;
     }
 
     // --- STATE HELPERS ---
@@ -3004,6 +3107,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setCurrentHistory(history) {
         stateStore.setCurrentHistory(appState, history);
+    }
+
+    function currentRedoHistory() {
+        return stateStore.currentRedoHistory(appState);
+    }
+
+    function setCurrentRedoHistory(history) {
+        stateStore.setCurrentRedoHistory(appState, history);
+    }
+
+    function clearAllAnnotationHistory() {
+        for (const imageId of appState.annotationHistoryByImage.keys()) {
+            appState.annotationHistoryByImage.set(imageId, []);
+            appState.annotationRedoByImage.set(imageId, []);
+        }
     }
 
     function currentDisplayImage() {

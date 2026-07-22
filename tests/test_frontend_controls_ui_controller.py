@@ -106,6 +106,7 @@ def test_controls_ui_controller_exports_expected_button_behavior():
                 quickClassInput: element(),
                 quickAddClassBtn: element(),
                 undoBtn: element(),
+                redoBtn: element(),
                 exportAnnotationFileBtn: element(),
                 loadAnnotationFileBtn: element(),
                 loadAnnotationFileInput: element(),
@@ -159,6 +160,7 @@ def test_controls_ui_controller_exports_expected_button_behavior():
             samHasRun: true,
             selectionExists: true,
             historyExists: true,
+            redoExists: true,
             annotationsExist: true,
             candidatesExist: true,
             classesExist: true,
@@ -191,6 +193,7 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         assert.strictEqual(activeRefs.selectionSummary.textContent, 'Selected: 2 candidates, 1 annotation');
         assert.strictEqual(activeRefs.nextActionText.textContent, 'Apply active class or press a class hotkey.');
         assert.strictEqual(activeRefs.undoBtn.disabled, false);
+        assert.strictEqual(activeRefs.redoBtn.disabled, false);
         assert.strictEqual(activeRefs.exportAnnotationFileBtn.disabled, false);
         assert.strictEqual(activeRefs.refreshMatchesBtn.textContent, 'Check Local Matches');
         assert.strictEqual(activeRefs.loadMatchedBtn.textContent, 'Import Local Matched');
@@ -216,6 +219,7 @@ def test_controls_ui_controller_exports_expected_button_behavior():
             samHasRun: false,
             selectionExists: false,
             historyExists: false,
+            redoExists: false,
             annotationsExist: false,
             candidatesExist: false,
             classesExist: false,
@@ -243,6 +247,8 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         assert.strictEqual(inactiveRefs.keepAnnotationsInput.disabled, true);
         assert.strictEqual(inactiveRefs.manualAnnotationBtn.disabled, true);
         assert.strictEqual(inactiveRefs.manualAnnotationBtn.textContent, 'Manual Box (B)');
+        assert.strictEqual(inactiveRefs.undoBtn.disabled, true);
+        assert.strictEqual(inactiveRefs.redoBtn.disabled, true);
         assert.strictEqual(inactiveRefs.applyPreprocessBtn.disabled, true);
         assert.strictEqual(inactiveRefs.applyPreprocessBtn.textContent, 'Original image active');
         assert.strictEqual(inactiveRefs.restoreOriginalBtn.disabled, true);

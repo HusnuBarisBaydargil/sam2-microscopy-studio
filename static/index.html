@@ -220,7 +220,10 @@
                         <input type="checkbox" id="oneClickAcceptInput" disabled>
                         <span>One-click accept active class</span>
                     </label>
-                    <button id="undoBtn" class="btn btn-secondary" disabled>Undo Batch (U)</button>
+                    <div class="annotation-history-actions">
+                        <button id="undoBtn" class="btn btn-secondary" disabled>Undo (U / Ctrl+Z)</button>
+                        <button id="redoBtn" class="btn btn-secondary" disabled>Redo (Ctrl+Y)</button>
+                    </div>
                 </div>
                 <div class="class-manager-panel">
                     <div class="class-manager-header">
@@ -434,8 +437,9 @@
                 <ul>
                     <li><b>B:</b> Toggle Manual Box mode.</li>
                     <li><b>Class hotkeys:</b> Configure each class shortcut in the Classes panel.</li>
-                    <li><b>U:</b> Undo the last classification batch.</li>
-                    <li><b>Delete:</b> Delete an annotation currently highlighted in the log.</li>
+                    <li><b>U or Ctrl+Z:</b> Undo the last annotation edit.</li>
+                    <li><b>Ctrl+Y or Ctrl+Shift+Z:</b> Redo the last undone annotation edit.</li>
+                    <li><b>Delete:</b> Delete the selected annotations as one reversible edit.</li>
                     <li><b>Import current image:</b> Import an existing CSV, YOLO TXT, COCO JSON, or Pascal VOC XML file for the loaded image.</li>
                     <li><b>Import Matched:</b> Import all matched annotation files for the opened image folder. Ambiguous duplicate image names are skipped until path-specific annotation files exist.</li>
                     <li><b>Save current annotations:</b> Write annotations for the current image to the app's server-side annotations folder.</li>
