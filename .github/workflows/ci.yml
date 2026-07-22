@@ -18,8 +18,6 @@ jobs:
     env:
       SKIP_SAM_MODEL_LOAD: "1"
       ALLOW_ABSOLUTE_ANNOTATION_DIR: "1"
-      PROJECT_SETTINGS_FILE: ${{ runner.temp }}/sam2-project-settings.json
-      PROJECT_MANIFEST_FILE: ${{ runner.temp }}/sam2-project-manifest.json
 
     steps:
       - name: Check out repository
@@ -46,6 +44,9 @@ jobs:
           python -m pip install -r requirements-ci.txt
 
       - name: Run tests
+        env:
+          PROJECT_SETTINGS_FILE: ${{ runner.temp }}/sam2-project-settings.json
+          PROJECT_MANIFEST_FILE: ${{ runner.temp }}/sam2-project-manifest.json
         run: python -m pytest tests -q
 
       - name: Run Ruff
