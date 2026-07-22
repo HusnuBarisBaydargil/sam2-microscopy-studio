@@ -135,6 +135,8 @@ The UI separates annotation file handling into two scopes:
 
 Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format.
 
+Server-side annotations, project classes, and project settings are written atomically. After a file has been saved more than once, its previous validated version is retained beside it with a `.bak` suffix. If the primary file is missing or invalid, the application reads the backup automatically; the next successful save replaces the primary while preserving a valid recovery copy.
+
 Class hotkeys apply the selected class to the current candidate or annotation selection. One-click accept is shown as an active canvas badge when enabled.
 
 ## Running Tests

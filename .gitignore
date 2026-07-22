@@ -18,6 +18,7 @@ env/
 annotations/
 project_settings.json
 project_classes.json
+*.bak
 .tmp/
 
 # Large/local model files

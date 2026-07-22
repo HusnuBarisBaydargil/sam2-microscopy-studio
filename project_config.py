@@ -2,6 +2,7 @@ import json
 import os
 
 from annotation_io import _normalize_annotation_format
+from atomic_io import atomic_write_file, read_with_backup, recoverable_file_exists
 from sam_service import (
     default_sam_settings,
     normalize_sam_device,
@@ -116,26 +117,34 @@ def load_project_settings(
     default_annotation_output_dir,
     allow_absolute_annotation_dir,
 ):
-    if not os.path.exists(settings_path):
+    if not recoverable_file_exists(settings_path):
         return normalize_project_settings(
             project_root=project_root,
             default_annotation_output_dir=default_annotation_output_dir,
             allow_absolute_annotation_dir=allow_absolute_annotation_dir,
         )
     try:
-        with open(settings_path, "r", encoding="utf-8") as file:
-            return normalize_project_settings(
-                json.load(file),
-                project_root=project_root,
-                default_annotation_output_dir=default_annotation_output_dir,
-                allow_absolute_annotation_dir=allow_absolute_annotation_dir,
-            )
+        raw_settings = read_with_backup(settings_path, _read_project_settings_json)
+        return normalize_project_settings(
+            raw_settings,
+            project_root=project_root,
+            default_annotation_output_dir=default_annotation_output_dir,
+            allow_absolute_annotation_dir=allow_absolute_annotation_dir,
+        )
     except Exception:
         return normalize_project_settings(
             project_root=project_root,
             default_annotation_output_dir=default_annotation_output_dir,
             allow_absolute_annotation_dir=allow_absolute_annotation_dir,
         )
+
+
+def _read_project_settings_json(path):
+    with open(path, "r", encoding="utf-8") as file:
+        settings = json.load(file)
+    if not isinstance(settings, dict):
+        raise ValueError("project settings must be a JSON object")
+    return settings
 
 
 def save_project_settings(
@@ -152,6 +161,13 @@ def save_project_settings(
         default_annotation_output_dir=default_annotation_output_dir,
         allow_absolute_annotation_dir=allow_absolute_annotation_dir,
     )
-    with open(settings_path, "w", encoding="utf-8") as file:
-        json.dump(normalized, file, indent=2)
+    def write_settings(path):
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(normalized, file, indent=2)
+
+    atomic_write_file(
+        settings_path,
+        write_settings,
+        validator=_read_project_settings_json,
+    )
     return normalized

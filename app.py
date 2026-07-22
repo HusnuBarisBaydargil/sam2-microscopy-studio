@@ -39,6 +39,7 @@ from annotation_paths import (
     safe_path_stem,
     save_project_classes,
 )
+from atomic_io import recoverable_file_exists
 from image_io import (
     ALLOWED_IMAGE_EXTENSIONS,
     _decode_cv2_bgr_image,
@@ -629,12 +630,12 @@ def load_annotations_endpoint():
         candidates = _annotation_candidate_paths(image_name, image_path, annotation_format)
         path = None
         for candidate in candidates:
-            if candidate["match_mode"] == match_mode and os.path.exists(candidate["path"]):
+            if candidate["match_mode"] == match_mode and recoverable_file_exists(candidate["path"]):
                 path = candidate["path"]
                 break
         if path is None:
             path = _annotation_path_for_image(image_name, image_path, match_mode, annotation_format)
-        path_exists = os.path.exists(path)
+        path_exists = recoverable_file_exists(path)
         match = {
             "exists": path_exists,
             "format": annotation_format,
@@ -655,7 +656,7 @@ def load_annotations_endpoint():
         if path is None:
             path = _annotation_path_for_image(image_name, image_path, match["match_mode"], annotation_format)
 
-    if not os.path.exists(path):
+    if not recoverable_file_exists(path):
         return jsonify({
             "exists": False,
             "annotations": [],
@@ -720,7 +721,7 @@ def save_annotations_endpoint():
 
     try:
         path = _annotation_path_for_image(image_name, image_path, match_mode, annotation_format)
-        if os.path.exists(path) and not overwrite:
+        if recoverable_file_exists(path) and not overwrite:
             return jsonify({
                 "error": "Annotation file already exists.",
                 "exists": True,

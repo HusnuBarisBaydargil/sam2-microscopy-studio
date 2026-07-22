@@ -7,6 +7,8 @@ from xml.sax.saxutils import escape as xml_escape
 
 import numpy as np
 
+from atomic_io import atomic_write_file, read_with_backup
+
 SUPPORTED_ANNOTATION_FORMATS = {
     "csv": {"label": "Simple CSV", "extension": "csv"},
     "csv_rich": {"label": "Rich CSV", "extension": "csv"},
@@ -522,7 +524,7 @@ def _format_number(value):
     return text or "0"
 
 
-def _count_annotation_file(path, annotation_format="csv"):
+def _count_annotation_file_direct(path, annotation_format="csv"):
     annotation_format = _normalize_annotation_format(annotation_format)
     if annotation_format in ("csv", "csv_rich"):
         return len(_read_annotation_csv(path))
@@ -541,6 +543,19 @@ def _count_annotation_file(path, annotation_format="csv"):
         root = ET.parse(path).getroot()
         return len(root.findall(".//object"))
     return 0
+
+
+def _count_annotation_file(path, annotation_format="csv"):
+    annotation_format = _normalize_annotation_format(annotation_format)
+    return read_with_backup(
+        path,
+        lambda candidate_path: _count_validated_annotation_file(candidate_path, annotation_format),
+    )
+
+
+def _count_validated_annotation_file(path, annotation_format):
+    _validate_annotation_file(path, annotation_format)
+    return _count_annotation_file_direct(path, annotation_format)
 
 
 def _read_annotation_yolo(path, image_size, classes):
@@ -806,8 +821,59 @@ def _write_annotation_voc(path, image_name, annotations, image_size):
         file.write("\n".join(lines) + "\n")
 
 
-def _read_annotation_file(path, annotation_format="csv", image_name="", image_size=None, classes=None):
+def _validate_annotation_file(path, annotation_format="csv"):
     annotation_format = _normalize_annotation_format(annotation_format)
+    if annotation_format in ("csv", "csv_rich"):
+        with open(path, "r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file)
+            required_fields = {"source_image", "x_min", "y_min", "x_max", "y_max", "class_label"}
+            if not reader.fieldnames or not required_fields.issubset(reader.fieldnames):
+                raise ValueError("annotation CSV is missing required columns")
+            for row_number, row in enumerate(reader, start=2):
+                if _annotation_from_csv_row(row, row_number - 1) is None:
+                    raise ValueError(f"annotation CSV row {row_number} is invalid")
+        return
+    if annotation_format == "yolo":
+        with open(path, "r", encoding="utf-8-sig") as file:
+            for line_number, raw_line in enumerate(file, start=1):
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) < 5:
+                    raise ValueError(f"YOLO line {line_number} must contain at least five values")
+                values = [float(value) for value in parts[:5]]
+                if not all(np.isfinite(value) for value in values):
+                    raise ValueError(f"YOLO line {line_number} contains non-finite values")
+                if not values[0].is_integer() or values[0] < 0 or values[3] <= 0 or values[4] <= 0:
+                    raise ValueError(f"YOLO line {line_number} contains invalid class or box values")
+        return
+    if annotation_format == "coco":
+        with open(path, "r", encoding="utf-8-sig") as file:
+            data = json.load(file)
+        if not isinstance(data, dict):
+            raise ValueError("COCO annotations must be a JSON object")
+        for field in ("images", "categories", "annotations"):
+            if not isinstance(data.get(field), list):
+                raise ValueError(f"COCO {field} must be a list")
+        for index, annotation in enumerate(data["annotations"]):
+            if not isinstance(annotation, dict):
+                raise ValueError(f"COCO annotation {index} must be an object")
+            _normalize_bbox(annotation.get("bbox"), field_name=f"COCO annotation {index} bbox")
+            if "category_id" not in annotation:
+                raise ValueError(f"COCO annotation {index} is missing category_id")
+        return
+    if annotation_format == "voc":
+        root = ET.parse(path).getroot()
+        if root.tag != "annotation":
+            raise ValueError("Pascal VOC root element must be annotation")
+        if len(_read_annotation_voc(path)) != len(root.findall(".//object")):
+            raise ValueError("Pascal VOC contains an invalid object")
+        return
+    raise ValueError("unsupported annotation format")
+
+
+def _read_annotation_file_direct(path, annotation_format, image_name, image_size, classes):
     classes = _normalize_classes(classes if classes is not None else [])
     if annotation_format in ("csv", "csv_rich"):
         return _read_annotation_csv(path)
@@ -820,6 +886,22 @@ def _read_annotation_file(path, annotation_format="csv", image_name="", image_si
     return []
 
 
+def _read_annotation_file(path, annotation_format="csv", image_name="", image_size=None, classes=None):
+    annotation_format = _normalize_annotation_format(annotation_format)
+
+    def read_annotations(candidate_path):
+        _validate_annotation_file(candidate_path, annotation_format)
+        return _read_annotation_file_direct(
+            candidate_path,
+            annotation_format,
+            image_name,
+            image_size,
+            classes,
+        )
+
+    return read_with_backup(path, read_annotations)
+
+
 def _write_annotation_file(path, image_name, annotations, annotation_format="csv", image_size=None, classes=None):
     annotation_format = _normalize_annotation_format(annotation_format)
     classes = _normalize_classes(classes if classes is not None else [])
@@ -830,15 +912,22 @@ def _write_annotation_file(path, image_name, annotations, annotation_format="csv
     )
     if normalized_image_size:
         annotations, _ = _clamp_annotations_to_image(annotations, normalized_image_size)
-    if annotation_format == "csv":
-        _write_annotation_csv(path, image_name, annotations, include_metadata=False)
-    elif annotation_format == "csv_rich":
-        _write_annotation_csv(path, image_name, annotations, include_metadata=True)
-    elif annotation_format == "yolo":
-        _write_annotation_yolo(path, annotations, normalized_image_size, classes)
-    elif annotation_format == "coco":
-        _write_annotation_coco(path, image_name, annotations, normalized_image_size, classes)
-    elif annotation_format == "voc":
-        _write_annotation_voc(path, image_name, annotations, normalized_image_size)
-    else:
-        raise ValueError("unsupported annotation format")
+    def write_annotations(temporary_path):
+        if annotation_format == "csv":
+            _write_annotation_csv(temporary_path, image_name, annotations, include_metadata=False)
+        elif annotation_format == "csv_rich":
+            _write_annotation_csv(temporary_path, image_name, annotations, include_metadata=True)
+        elif annotation_format == "yolo":
+            _write_annotation_yolo(temporary_path, annotations, normalized_image_size, classes)
+        elif annotation_format == "coco":
+            _write_annotation_coco(temporary_path, image_name, annotations, normalized_image_size, classes)
+        elif annotation_format == "voc":
+            _write_annotation_voc(temporary_path, image_name, annotations, normalized_image_size)
+        else:
+            raise ValueError("unsupported annotation format")
+
+    atomic_write_file(
+        path,
+        write_annotations,
+        validator=lambda candidate_path: _validate_annotation_file(candidate_path, annotation_format),
+    )
