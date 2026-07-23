@@ -171,6 +171,10 @@
 
     function normalizeProjectSettingsForClient(data, currentSettings = {}) {
         const nextSettings = {
+            schemaVersion: Number(data.schema_version) || currentSettings.schemaVersion || 1,
+            projectId: String(data.project_id || currentSettings.projectId || ''),
+            taskType: String(data.task_type || currentSettings.taskType || 'bounding_box'),
+            manifestPath: String(data.manifest_path || currentSettings.manifestPath || 'project_manifest.json'),
             annotationOutputDir: data.annotation_output_dir || 'annotations',
             annotationDirDisplay: data.annotation_dir_display || data.annotation_output_dir || 'annotations',
             annotationFormat: normalizeAnnotationFormat(data.annotation_format || currentSettings.annotationFormat),

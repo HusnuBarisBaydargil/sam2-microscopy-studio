@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SKIP_SAM_MODEL_LOAD: "1"
+      ALLOW_ABSOLUTE_ANNOTATION_DIR: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.txt
+
+      - name: Set up Node.js for frontend tests
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
+          python -m pip install -r requirements-ci.txt
+
+      - name: Run tests
+        env:
+          PROJECT_SETTINGS_FILE: ${{ runner.temp }}/sam2-project-settings.json
+          PROJECT_MANIFEST_FILE: ${{ runner.temp }}/sam2-project-manifest.json
+        run: python -m pytest tests -q
+
+      - name: Run Ruff
+        run: python -m ruff check .

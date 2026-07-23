@@ -48,6 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!annotationController) {
         throw new Error('SAM2AnnotationController must be loaded before script.js.');
     }
+    const projectDatasetController = window.SAM2ProjectDatasetController;
+    if (!projectDatasetController) {
+        throw new Error('SAM2ProjectDatasetController must be loaded before script.js.');
+    }
     const annotationWorkflowController = window.SAM2AnnotationWorkflowController;
     if (!annotationWorkflowController) {
         throw new Error('SAM2AnnotationWorkflowController must be loaded before script.js.');
@@ -185,7 +189,10 @@ document.addEventListener('DOMContentLoaded', () => {
         resetPreprocessSettingsBtn,
         manualAnnotationBtn,
         undoBtn,
+        redoBtn,
         exportAnnotationFileBtn,
+        validateProjectDatasetBtn,
+        exportProjectDatasetBtn,
         loadAnnotationFileBtn,
         loadAnnotationFileInput,
         loadServerAnnotationsBtn,
@@ -344,8 +351,11 @@ document.addEventListener('DOMContentLoaded', () => {
             applyInspectorBoxEdit();
         });
     });
-    undoBtn.addEventListener('click', handleUndoBatch);
+    undoBtn.addEventListener('click', handleUndoAction);
+    redoBtn.addEventListener('click', handleRedoAction);
     exportAnnotationFileBtn.addEventListener('click', handleExportAnnotationFile);
+    validateProjectDatasetBtn.addEventListener('click', handleValidateProjectDataset);
+    exportProjectDatasetBtn.addEventListener('click', handleExportProjectDataset);
     loadAnnotationFileBtn.addEventListener('click', () => {
         if (appState.currentImage) loadAnnotationFileInput.click();
     });
@@ -463,6 +473,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.error) throw new Error(data.error);
 
             imageRecord.originalImage = await loadImageElement(data.image_url);
+            imageRecord.width = Number(data.width) || imageRecord.originalImage.width;
+            imageRecord.height = Number(data.height) || imageRecord.originalImage.height;
             return true;
         } catch (error) {
             console.error('Image Load Error:', error);
@@ -887,6 +899,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
 
             setCurrentCandidates(candidateAnnotations);
+            setCurrentRedoHistory([]);
             appState.selectedCandidateIds.clear();
             if (!keepExistingAnnotations) {
                 setCurrentAnnotations([]);
@@ -929,6 +942,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         setCurrentCandidates([]);
+        setCurrentRedoHistory([]);
         appState.selectedCandidateIds.clear();
         imageRecord.samHasRun = false;
 
@@ -952,11 +966,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const historyStart = currentHistory().length;
         const relabeledCount = relabelSelectedAnnotations(className);
         const convertedCount = convertSelectedCandidates(className);
         const totalCount = relabeledCount + convertedCount;
 
         if (totalCount === 0) return;
+
+        annotationController.groupHistoryCommands(currentHistory(), historyStart, 'class application');
 
         markCurrentImageDirty();
         updateAnnotationLog();
@@ -978,6 +995,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentCandidates(),
             currentAnnotations(),
             currentHistory(),
+            currentRedoHistory(),
             className,
             clampBboxToImage
         );
@@ -1007,14 +1025,16 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(msg, 'error');
             return false;
         }
+        const annotationIndex = currentAnnotations().length;
+        const candidateIndex = currentCandidates().findIndex(item => item.id === candidate.id);
         currentAnnotations().push(newAnnotation);
         setCurrentCandidates(currentCandidates().filter(item => item.id !== candidate.id));
         appState.selectedCandidateIds.delete(candidate.id);
         appState.selectedAnnotationIds.clear();
-        currentHistory().push({
+        annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
             type: 'convert_candidates',
-            convertedAnnotations: [newAnnotation],
-            originalCandidates: [candidate]
+            annotationRecords: [{ item: newAnnotation, index: annotationIndex }],
+            candidateRecords: [{ item: candidate, index: candidateIndex }]
         });
         markCurrentImageDirty();
         updateAnnotationLog();
@@ -1033,18 +1053,58 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAnnotations(),
             appState.selectedAnnotationIds,
             currentHistory(),
+            currentRedoHistory(),
             className
         );
     }
 
-    function handleUndoBatch() {
-        const msg = annotationController.undoLastBatch(
+    function handleUndoAction() {
+        const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
+        const msg = annotationController.undoLastAction(
             currentAnnotations(),
             currentCandidates(),
-            currentHistory()
+            currentHistory(),
+            currentRedoHistory(),
+            appState.classes
         );
         if (!msg) return;
 
+        if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
+            scheduleProjectClassesSave();
+            renderClassControls(classificationSelect.value);
+        }
+
+        appState.selectedAnnotationIds.clear();
+        appState.selectedCandidateIds.clear();
+
+        updateAnnotationLog();
+        markCurrentImageDirty();
+        renderImageBrowser();
+        updateAnnotationInspector();
+        updateStatus(msg);
+        showToast(msg, 'info');
+        draw();
+        updateButtonStates();
+    }
+
+    function handleRedoAction() {
+        const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
+        const msg = annotationController.redoLastAction(
+            currentAnnotations(),
+            currentCandidates(),
+            currentHistory(),
+            currentRedoHistory(),
+            appState.classes
+        );
+        if (!msg) return;
+
+        if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
+            scheduleProjectClassesSave();
+            renderClassControls(classificationSelect.value);
+        }
+
+        appState.selectedAnnotationIds.clear();
+        appState.selectedCandidateIds.clear();
         updateAnnotationLog();
         markCurrentImageDirty();
         renderImageBrowser();
@@ -1084,9 +1144,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return existingClass.name;
         }
 
-        const newClass = classManagerLogic.buildNewClass(className, appState.classes);
+        const newClass = classManagerLogic.buildNewClass(className, appState.classes, appState.nextClassId);
 
         appState.classes.push(newClass);
+        appState.nextClassId = Math.max(appState.nextClassId, newClass.id + 1);
         scheduleProjectClassesSave();
         renderClassControls(select ? newClass.name : classificationSelect.value);
         quickClassInput.value = '';
@@ -1180,6 +1241,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         classInfo.name = newName;
         const changedCount = renameAnnotationClass(oldName, newName);
+        if (changedCount > 0) clearAllAnnotationHistory();
         scheduleProjectClassesSave();
         renderClassControls(newName);
         updateAnnotationLog();
@@ -1226,12 +1288,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const keepClassForOtherImages = countOtherImageAnnotationsWithClass(classToDelete.name) > 0;
 
+        const historyStart = currentHistory().length;
         const deletedCount = deleteCurrentImageAnnotationsWithClass(classToDelete.name);
 
         if (!keepClassForOtherImages) {
             appState.classes.splice(index, 1);
+            annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
+                type: 'remove_class',
+                classRecord: { item: classToDelete, index }
+            });
             scheduleProjectClassesSave();
         }
+
+        annotationController.groupHistoryCommands(currentHistory(), historyStart, 'class deletion');
 
         const preferredClass = !keepClassForOtherImages && classificationSelect.value === classToDelete.name
             ? ''
@@ -1422,7 +1491,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const changes = canvasInteractionController.commitBoxEdit(appState, findAnnotationById, bboxesEqual);
 
         if (changes.length > 0) {
-            currentHistory().push({ type: 'geometry_edit', changes });
+            annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
+            annotationController.recordHistoryCommand(
+                currentHistory(),
+                currentRedoHistory(),
+                { type: 'geometry_edit', changes }
+            );
             markCurrentImageDirty();
             renderImageBrowser();
             updateAnnotationLog();
@@ -1456,7 +1530,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (changes.length === 0) return;
 
-        currentHistory().push({ type: 'geometry_edit', changes });
+        annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
+        annotationController.recordHistoryCommand(
+            currentHistory(),
+            currentRedoHistory(),
+            { type: 'geometry_edit', changes }
+        );
         markCurrentImageDirty();
         renderImageBrowser();
         updateAnnotationLog();
@@ -1652,7 +1731,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (error) throw new Error(error);
             if (!newAnnotation) return;
 
+            const annotationIndex = currentAnnotations().length;
             currentAnnotations().push(newAnnotation);
+            annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
+                type: 'create_annotations',
+                annotationRecords: [{ item: newAnnotation, index: annotationIndex }]
+            });
             markCurrentImageDirty();
 
             const msg = `Added manual annotation #${newAnnotation.id} as '${className}'.`;
@@ -1693,19 +1777,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function deleteAnnotationById(idToDelete) {
         annotationLogController.hideContextMenu(annotationLogRefs());
-        const deletedAnnotation = annotationController.deleteAnnotationById(
+        const deletedAnnotations = annotationController.deleteAnnotationsByIds(
             currentAnnotations(),
             currentCandidates(),
             currentHistory(),
+            currentRedoHistory(),
             appState.selectedAnnotationIds,
-            idToDelete
+            [idToDelete]
         );
-        if (!deletedAnnotation) return;
+        if (deletedAnnotations.length === 0) return;
 
         appState.logItemToModify = null;
         markCurrentImageDirty();
 
-        const msg = `Deleted annotation #${deletedAnnotation.id}.`;
+        const msg = `Deleted annotation #${deletedAnnotations[0].id}.`;
         updateStatus(msg);
         showToast(msg, 'info');
         updateAnnotationLog();
@@ -1764,7 +1849,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.key === 'Delete') {
             event.preventDefault();
             const selectedIds = Array.from(appState.selectedAnnotationIds);
-            selectedIds.forEach(id => deleteAnnotationById(id));
+            const deletedAnnotations = annotationController.deleteAnnotationsByIds(
+                currentAnnotations(),
+                currentCandidates(),
+                currentHistory(),
+                currentRedoHistory(),
+                appState.selectedAnnotationIds,
+                selectedIds
+            );
+            if (deletedAnnotations.length > 0) {
+                markCurrentImageDirty();
+                appState.logItemToModify = null;
+                updateStatus(`Deleted ${deletedAnnotations.length} selected annotation${deletedAnnotations.length === 1 ? '' : 's'}.`);
+                updateAnnotationLog();
+                renderImageBrowser();
+                draw();
+                updateButtonStates();
+            }
+            return;
+        }
+
+        const undoShortcut = event.key.toLowerCase() === 'u'
+            || (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z');
+        const redoShortcut = event.ctrlKey
+            && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'));
+        if (redoShortcut) {
+            event.preventDefault();
+            handleRedoAction();
+            return;
+        }
+        if (undoShortcut) {
+            event.preventDefault();
+            handleUndoAction();
             return;
         }
 
@@ -1775,12 +1891,6 @@ document.addEventListener('DOMContentLoaded', () => {
             event.preventDefault();
             const step = event.shiftKey ? 10 : 1;
             nudgeSelectedAnnotations(arrowDelta.dx * step, arrowDelta.dy * step);
-            return;
-        }
-
-        if (event.key.toLowerCase() === 'u') {
-            event.preventDefault();
-            handleUndoBatch();
             return;
         }
 
@@ -2281,6 +2391,101 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function buildProjectDatasetExport() {
+        return projectDatasetController.buildProjectCocoExport({
+            projectId: appState.projectSettings.projectId,
+            schemaVersion: appState.projectSettings.schemaVersion,
+            taskType: appState.projectSettings.taskType,
+            images: appState.images,
+            annotationsByImage: appState.annotationsByImage,
+            annotationMatchesByImage: appState.annotationMatchesByImage,
+            candidateAnnotationsByImage: appState.candidateAnnotationsByImage,
+            dirtyImageIds: appState.dirtyImages,
+            classes: appState.classes,
+            imageName: publicImageName,
+            imagePath: publicImagePath,
+            normalizeAnnotation
+        });
+    }
+
+    function reportProjectValidation(validation) {
+        const msg = projectDatasetController.validationSummary(validation);
+        updateStatus(msg);
+        showToast(msg, validation.valid ? (validation.warnings.length > 0 ? 'info' : 'success') : 'error');
+        if (!validation.valid) console.warn('Project dataset validation errors:', validation.errors);
+        if (validation.warnings.length > 0) {
+            console.info('Project dataset validation warnings:', validation.warnings);
+        }
+        return msg;
+    }
+
+    async function ensureProjectImageDimensions() {
+        const missingDimensions = appState.images.filter(imageRecord => !imageController.imageDimensions(imageRecord));
+        if (missingDimensions.length === 0) return true;
+
+        setLoader(true, `Inspecting ${missingDimensions.length} project image${missingDimensions.length === 1 ? '' : 's'}...`);
+        try {
+            for (const imageRecord of missingDimensions) {
+                const response = await apiWorkflows.loadImageInfo(imageRecord.file);
+                if (!response.ok) throw new Error(`Server error for ${publicImageName(imageRecord)}: ${response.statusText}`);
+                const data = await response.json();
+                if (data.error) throw new Error(`${publicImageName(imageRecord)}: ${data.error}`);
+                imageRecord.width = Number(data.width);
+                imageRecord.height = Number(data.height);
+                if (!imageController.imageDimensions(imageRecord)) {
+                    throw new Error(`${publicImageName(imageRecord)} returned invalid dimensions.`);
+                }
+            }
+            return true;
+        } catch (error) {
+            const msg = `Could not inspect project images: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+            return false;
+        } finally {
+            setLoader(false);
+        }
+    }
+
+    async function handleValidateProjectDataset() {
+        if (!await ensureProjectImageDimensions()) return;
+        try {
+            const { validation } = buildProjectDatasetExport();
+            reportProjectValidation(validation);
+        } catch (error) {
+            const msg = `Failed to validate project dataset: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+        }
+    }
+
+    async function handleExportProjectDataset() {
+        if (!await ensureProjectImageDimensions()) return;
+        try {
+            const exportData = buildProjectDatasetExport();
+            reportProjectValidation(exportData.validation);
+            if (!exportData.validation.valid) return;
+
+            const blob = new Blob([exportData.content], { type: `${exportData.mime};charset=utf-8` });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = exportData.fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            const msg = `Exported project COCO: ${exportData.validation.stats.images} images and ${exportData.validation.stats.annotations} annotations.`;
+            updateStatus(msg);
+            showToast(msg, 'success');
+        } catch (error) {
+            const msg = `Failed to export project dataset: ${error.message}`;
+            updateStatus(msg);
+            showToast(msg, 'error');
+        }
+    }
+
     async function handleLoadAnnotationFile(event) {
         const file = event.target.files[0];
         event.target.value = '';
@@ -2609,6 +2814,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (Array.isArray(data.classes)) {
+                appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 applyLoadedClasses(data.classes);
             }
         } catch (error) {
@@ -2631,6 +2837,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (data.error) throw new Error(data.error);
+            if (Array.isArray(data.classes)) {
+                appState.classes = normalizeClassList(data.classes);
+                appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
+                renderClassControls(classificationSelect.value);
+            }
             if (!silent) {
                 const msg = `Saved ${appState.classes.length} project classes.`;
                 updateStatus(msg);
@@ -2680,6 +2891,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyLoadedClasses(classes) {
         const normalizedClasses = normalizeClassList(classes);
         appState.classes = normalizedClasses;
+        appState.nextClassId = Math.max(
+            appState.nextClassId,
+            normalizedClasses.reduce((maximum, classInfo) => Math.max(maximum, classInfo.id || 0), 0) + 1
+        );
         const addedClassCount = ensureClassesForAnnotations(currentAnnotations());
         if (addedClassCount > 0) scheduleProjectClassesSave();
         renderClassControls(classificationSelect.value);
@@ -2775,10 +2990,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (bboxesEqual(oldBbox, newBbox)) return;
 
         annotation.bbox = newBbox;
-        currentHistory().push({
-            type: 'geometry_edit',
-            changes: [{ id: annotation.id, oldBbox, newBbox: newBbox.slice() }]
-        });
+        const changes = [{ id: annotation.id, oldBbox, newBbox: newBbox.slice() }];
+        annotationController.invalidateMaskGeometryForChanges(currentAnnotations(), changes);
+        annotationController.recordHistoryCommand(
+            currentHistory(),
+            currentRedoHistory(),
+            { type: 'geometry_edit', changes }
+        );
         markCurrentImageDirty();
         renderImageBrowser();
         updateAnnotationLog();
@@ -2844,8 +3062,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 oneClickAcceptInput,
                 quickClassInput,
                 quickAddClassBtn,
+                redoBtn,
                 undoBtn,
                 exportAnnotationFileBtn,
+                validateProjectDatasetBtn,
+                exportProjectDatasetBtn,
                 loadAnnotationFileBtn,
                 loadAnnotationFileInput,
                 loadServerAnnotationsBtn,
@@ -2867,6 +3088,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 samHasRun: Boolean(appState.currentImage?.samHasRun),
                 selectionExists,
                 historyExists: currentHistory().length > 0,
+                redoExists: currentRedoHistory().length > 0,
                 annotationsExist: currentAnnotations().length > 0,
                 candidatesExist: currentCandidates().length > 0,
                 classesExist: appState.classes.length > 0,
@@ -2892,8 +3114,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function ensureClassesForAnnotations(annotations) {
-        const result = classManagerLogic.ensureClassesForAnnotations(appState.classes, annotations);
+        const result = classManagerLogic.ensureClassesForAnnotations(
+            appState.classes,
+            annotations,
+            appState.nextClassId
+        );
         appState.classes = result.classes;
+        appState.nextClassId = result.nextClassId;
         return result.addedCount;
     }
 
@@ -2926,20 +3153,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function deleteCurrentImageAnnotationsWithClass(className) {
-        const { deletedCount, remainingAnnotations } = annotationController.deleteAnnotationsWithClass(
+        const idsToDelete = currentAnnotations()
+            .filter(annotation => annotation.class === className)
+            .map(annotation => annotation.id);
+        const deletedAnnotations = annotationController.deleteAnnotationsByIds(
             currentAnnotations(),
-            className
+            currentCandidates(),
+            currentHistory(),
+            currentRedoHistory(),
+            appState.selectedAnnotationIds,
+            idsToDelete
         );
 
-        if (deletedCount > 0) {
-            setCurrentAnnotations(remainingAnnotations);
-            setCurrentHistory([]);
-            markCurrentImageDirty();
-        }
+        if (deletedAnnotations.length > 0) markCurrentImageDirty();
 
         appState.selectedAnnotationIds.clear();
         appState.logItemToModify = null;
-        return deletedCount;
+        return deletedAnnotations.length;
     }
 
     // --- STATE HELPERS ---
@@ -3000,6 +3230,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setCurrentHistory(history) {
         stateStore.setCurrentHistory(appState, history);
+    }
+
+    function currentRedoHistory() {
+        return stateStore.currentRedoHistory(appState);
+    }
+
+    function setCurrentRedoHistory(history) {
+        stateStore.setCurrentRedoHistory(appState, history);
+    }
+
+    function clearAllAnnotationHistory() {
+        for (const imageId of appState.annotationHistoryByImage.keys()) {
+            appState.annotationHistoryByImage.set(imageId, []);
+            appState.annotationRedoByImage.set(imageId, []);
+        }
     }
 
     function currentDisplayImage() {

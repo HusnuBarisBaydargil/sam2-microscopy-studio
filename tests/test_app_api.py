@@ -1,5 +1,6 @@
 import base64
 import io
+import uuid
 
 from PIL import Image
 
@@ -47,9 +48,20 @@ def test_load_image_rejects_bad_extension_and_accepts_png(client):
         content_type="multipart/form-data",
     )
     assert good.status_code == 200
-    image_url = good.get_json()["image_url"]
+    image_data = good.get_json()
+    image_url = image_data["image_url"]
     assert image_url.startswith("data:image/png;base64,")
     base64.b64decode(image_url.split(",", 1)[1])
+    assert image_data["width"] == 4
+    assert image_data["height"] == 3
+
+    info = client.post(
+        "/api/image_info",
+        data={"image": (png_bytes(size=(9, 7)), "sample.png")},
+        content_type="multipart/form-data",
+    )
+    assert info.status_code == 200
+    assert info.get_json() == {"width": 9, "height": 7}
 
 
 def test_annotation_save_and_load_round_trip_csv(client):
@@ -87,6 +99,40 @@ def test_annotation_save_and_load_round_trip_csv(client):
     assert data["annotations"][0]["class"] == "nucleus"
     assert data["annotations"][0]["bbox"] == [10.0, 6.0, 20.0, 15.0]
     assert data["classes"][0]["name"] == "nucleus"
+    assert data["classes"][0]["id"] == 1
+
+
+def test_project_manifest_exposes_stable_project_and_class_ids(client):
+    initial = client.get("/api/project/manifest")
+    assert initial.status_code == 200
+    initial_data = initial.get_json()
+    assert initial_data["schema_version"] == 1
+    assert str(uuid.UUID(initial_data["project_id"])) == initial_data["project_id"]
+    assert initial_data["task_type"] == "bounding_box"
+
+    saved = client.post(
+        "/api/classes",
+        json={"classes": [{"name": "first"}, {"name": "second"}]},
+    ).get_json()["classes"]
+    first_id, second_id = saved[0]["id"], saved[1]["id"]
+    reordered = client.post(
+        "/api/classes",
+        json={
+            "classes": [
+                {**saved[1], "name": "renamed second"},
+                saved[0],
+            ]
+        },
+    ).get_json()["classes"]
+    assert [item["id"] for item in reordered] == [second_id, first_id]
+
+    classes_response = client.get("/api/classes").get_json()
+    assert classes_response["next_class_id"] > max(first_id, second_id)
+
+    settings = client.get("/api/project/settings").get_json()
+    assert settings["project_id"] == initial_data["project_id"]
+    assert settings["schema_version"] == 1
+    assert settings["manifest_path"].endswith("project_manifest.json")
 
 
 def test_project_settings_validation_and_persistence(client):

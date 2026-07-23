@@ -1451,6 +1451,12 @@ tr.highlighted {
     gap: 8px;
 }
 
+.annotation-history-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
 .one-click-accept-row {
     display: flex;
     align-items: center;

@@ -193,6 +193,7 @@ def test_annotation_workflow_controller_updates_state_and_api_payloads():
             matchSummary: null,
             annotationsByImage: new Map(),
             annotationHistoryByImage: new Map(),
+            annotationRedoByImage: new Map(),
             annotationCounter: 0,
             dirtyImages: new Set(),
             selectedAnnotationIds: new Set([9]),
@@ -295,6 +296,10 @@ def test_annotation_workflow_controller_updates_state_and_api_payloads():
             assert.strictEqual(state.dirtyImages.has('img-1'), true);
             assert.strictEqual(state.selectedAnnotationIds.size, 0);
             assert.strictEqual(state.selectedCandidateIds.size, 0);
+            assert.deepStrictEqual(plain(state.annotationRedoByImage.get('img-1')), []);
+            assert.strictEqual(state.annotationHistoryByImage.get('img-1').length, 1);
+            assert.strictEqual(state.annotationHistoryByImage.get('img-1')[0].type, 'replace_annotations');
+            assert.strictEqual(state.annotationHistoryByImage.get('img-1')[0].afterRecords[0].item.id, 7);
             assert.strictEqual(state.savedClasses, true);
             assert.strictEqual(ensured[0].class, 'membrane');
         }

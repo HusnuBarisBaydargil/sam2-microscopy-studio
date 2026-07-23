@@ -111,6 +111,8 @@ def test_image_controller_exports_expected_image_logic():
             publicName: 'image_00005.tif',
             publicDisplayPath: 'image_00005.tif',
             file,
+            width: 100,
+            height: 80,
             originalImage: imageElement,
             processedImage: null,
             preprocessMethod: 'original',
@@ -193,6 +195,10 @@ def test_image_controller_exports_expected_image_logic():
             assert.deepStrictEqual(
                 plain(controller.imageDimensions({ processedImage: { width: 30, height: 40 } })),
                 { width: 30, height: 40 }
+            );
+            assert.deepStrictEqual(
+                plain(controller.imageDimensions({ width: 50, height: 60 })),
+                { width: 50, height: 60 }
             );
             assert.strictEqual(controller.imageDimensions({ originalImage: { width: 0, height: 20 } }), null);
 

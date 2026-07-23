@@ -29,6 +29,10 @@ EXPECTED_DOM_REFS = [
     "selectionSummary",
     "nextActionText",
     "oneClickModeBadge",
+    "undoBtn",
+    "redoBtn",
+    "validateProjectDatasetBtn",
+    "exportProjectDatasetBtn",
     "samReadinessText",
     "helpModal",
 ]
@@ -108,6 +112,10 @@ def test_dom_refs_exports_expected_element_mapping():
         assert.strictEqual(domRefs.DOM_REF_IDS.nextActionText, 'nextActionText');
         assert.strictEqual(domRefs.DOM_REF_IDS.oneClickModeBadge, 'oneClickModeBadge');
         assert.strictEqual(domRefs.DOM_REF_IDS.annotationLogHint, 'annotationLogHint');
+        assert.strictEqual(domRefs.DOM_REF_IDS.undoBtn, 'undoBtn');
+        assert.strictEqual(domRefs.DOM_REF_IDS.redoBtn, 'redoBtn');
+        assert.strictEqual(domRefs.DOM_REF_IDS.validateProjectDatasetBtn, 'validateProjectDatasetBtn');
+        assert.strictEqual(domRefs.DOM_REF_IDS.exportProjectDatasetBtn, 'exportProjectDatasetBtn');
         assert.strictEqual(domRefs.DOM_REF_IDS.classManagerFeedback, 'classManagerFeedback');
         assert.strictEqual(domRefs.DOM_REF_IDS.samReadinessText, 'samReadinessText');
 

@@ -37,6 +37,8 @@
                     <button id="saveServerBtn" class="btn btn-secondary" disabled>Save current annotations</button>
                     <button id="saveAllServerBtn" class="btn btn-secondary" disabled>Save all unsaved annotations</button>
                     <button id="exportAnnotationFileBtn" class="btn btn-primary" disabled>Export current annotations</button>
+                    <button id="validateProjectDatasetBtn" class="btn btn-secondary" disabled>Validate project</button>
+                    <button id="exportProjectDatasetBtn" class="btn btn-primary" disabled>Export project COCO</button>
                     <span id="unsavedStateIndicator" class="unsaved-state-indicator saved">All changes saved</span>
                     <button id="helpBtn" class="btn btn-secondary help-btn" title="Help & Shortcuts">?</button>
                 </div>
@@ -220,7 +222,10 @@
                         <input type="checkbox" id="oneClickAcceptInput" disabled>
                         <span>One-click accept active class</span>
                     </label>
-                    <button id="undoBtn" class="btn btn-secondary" disabled>Undo Batch (U)</button>
+                    <div class="annotation-history-actions">
+                        <button id="undoBtn" class="btn btn-secondary" disabled>Undo (U / Ctrl+Z)</button>
+                        <button id="redoBtn" class="btn btn-secondary" disabled>Redo (Ctrl+Y)</button>
+                    </div>
                 </div>
                 <div class="class-manager-panel">
                     <div class="class-manager-header">
@@ -434,11 +439,14 @@
                 <ul>
                     <li><b>B:</b> Toggle Manual Box mode.</li>
                     <li><b>Class hotkeys:</b> Configure each class shortcut in the Classes panel.</li>
-                    <li><b>U:</b> Undo the last classification batch.</li>
-                    <li><b>Delete:</b> Delete an annotation currently highlighted in the log.</li>
+                    <li><b>U or Ctrl+Z:</b> Undo the last annotation edit.</li>
+                    <li><b>Ctrl+Y or Ctrl+Shift+Z:</b> Redo the last undone annotation edit.</li>
+                    <li><b>Delete:</b> Delete the selected annotations as one reversible edit.</li>
                     <li><b>Import current image:</b> Import an existing CSV, YOLO TXT, COCO JSON, or Pascal VOC XML file for the loaded image.</li>
                     <li><b>Import Matched:</b> Import all matched annotation files for the opened image folder. Ambiguous duplicate image names are skipped until path-specific annotation files exist.</li>
                     <li><b>Save current annotations:</b> Write annotations for the current image to the app's server-side annotations folder.</li>
+                    <li><b>Validate project:</b> Check all loaded images, classes, and final annotations for COCO dataset consistency.</li>
+                    <li><b>Export project COCO:</b> Validate and download one consolidated COCO file for every loaded image, including unannotated negative examples.</li>
                     <li><b>Escape:</b> Exit Manual Mode, cancel a drawing, or close this window.</li>
                 </ul>
             </div>
@@ -454,6 +462,7 @@
     <script src="static/imageController.js"></script>
     <script src="static/annotationMatching.js"></script>
     <script src="static/annotationCodecs.js"></script>
+    <script src="static/projectDatasetController.js"></script>
     <script src="static/annotationController.js"></script>
     <script src="static/annotationWorkflowController.js"></script>
     <script src="static/projectSettingsClient.js"></script>

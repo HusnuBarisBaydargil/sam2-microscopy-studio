@@ -12,6 +12,7 @@
             samHasRun,
             selectionExists,
             historyExists,
+            redoExists,
             annotationsExist,
             candidatesExist,
             classesExist,
@@ -75,7 +76,10 @@
         refs.oneClickModeBadge.classList.toggle('hidden', !oneClickActive);
 
         refs.undoBtn.disabled = !historyExists;
+        refs.redoBtn.disabled = !redoExists;
         refs.exportAnnotationFileBtn.disabled = !annotationsExist;
+        refs.validateProjectDatasetBtn.disabled = imageCount === 0;
+        refs.exportProjectDatasetBtn.disabled = imageCount === 0;
         refs.loadAnnotationFileBtn.disabled = !imageLoaded;
         refs.loadAnnotationFileInput.disabled = !imageLoaded;
         refs.loadServerAnnotationsBtn.disabled = !imageLoaded;

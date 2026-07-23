@@ -13,13 +13,16 @@ ANNOTATION_CONTROLLER_CALLS = [
     "annotationController.annotationFromCandidate(",
     "annotationController.convertSelectedCandidates(",
     "annotationController.relabelSelectedAnnotations(",
-    "annotationController.undoLastBatch(",
-    "annotationController.deleteAnnotationById(",
+    "annotationController.invalidateMaskGeometryForChanges(",
+    "annotationController.recordHistoryCommand(",
+    "annotationController.groupHistoryCommands(",
+    "annotationController.undoLastAction(",
+    "annotationController.redoLastAction(",
+    "annotationController.deleteAnnotationsByIds(",
     "annotationController.selectedAnnotations(",
     "annotationController.countAnnotationsWithClass(",
     "annotationController.countOtherImageAnnotationsWithClass(",
     "annotationController.renameAnnotationClass(",
-    "annotationController.deleteAnnotationsWithClass(",
 ]
 
 
@@ -109,6 +112,7 @@ def test_annotation_controller_exports_expected_mutation_behavior():
         ];
         const annotations = [{ id: 2, bbox: [5, 6, 7, 8], class: 'Old', type: 'loaded' }];
         const history = [];
+        const redoHistory = [];
         const clamp = bbox => bbox.slice();
 
         const converted = controller.convertSelectedCandidates(
@@ -116,6 +120,7 @@ def test_annotation_controller_exports_expected_mutation_behavior():
             candidates,
             annotations,
             history,
+            redoHistory,
             'Nucleus',
             clamp
         );
@@ -147,52 +152,183 @@ def test_annotation_controller_exports_expected_mutation_behavior():
             annotations,
             state.selectedAnnotationIds,
             history,
+            redoHistory,
             'Membrane'
         );
         assert.strictEqual(relabeledCount, 1);
         assert.strictEqual(annotations[0].class, 'Membrane');
         assert.strictEqual(history.at(-1).type, 'relabel_annotations');
 
-        let undoMessage = controller.undoLastBatch(annotations, converted.remainingCandidates, history);
-        assert.strictEqual(undoMessage, 'Reverted relabeling for 1 annotations.');
+        let undoMessage = controller.undoLastAction(annotations, converted.remainingCandidates, history, redoHistory);
+        assert.strictEqual(undoMessage, 'Undid relabeling 1 annotation.');
         assert.strictEqual(annotations[0].class, 'Old');
 
-        undoMessage = controller.undoLastBatch(annotations, converted.remainingCandidates, history);
-        assert.strictEqual(undoMessage, 'Reverted last batch of 1 annotations.');
+        undoMessage = controller.undoLastAction(annotations, converted.remainingCandidates, history, redoHistory);
+        assert.strictEqual(undoMessage, 'Undid acceptance of 1 annotation.');
         assert.deepStrictEqual(plain(annotations), [{ id: 2, bbox: [5, 6, 7, 8], class: 'Old', type: 'loaded' }]);
         assert.strictEqual(converted.remainingCandidates.length, 2);
 
-        history.push({
+        let redoMessage = controller.redoLastAction(annotations, converted.remainingCandidates, history, redoHistory);
+        assert.strictEqual(redoMessage, 'Redid acceptance of 1 annotation.');
+        assert.strictEqual(annotations.length, 2);
+        assert.strictEqual(converted.remainingCandidates.length, 1);
+        redoMessage = controller.redoLastAction(annotations, converted.remainingCandidates, history, redoHistory);
+        assert.strictEqual(redoMessage, 'Redid relabeling 1 annotation.');
+        assert.strictEqual(annotations[0].class, 'Membrane');
+
+        controller.recordHistoryCommand(history, redoHistory, {
             type: 'geometry_edit',
-            changes: [{ id: 2, oldBbox: [1, 1, 2, 2] }]
+            changes: [{ id: 2, oldBbox: [1, 1, 2, 2], newBbox: [9, 9, 9, 9] }]
         });
         annotations[0].bbox = [9, 9, 9, 9];
-        undoMessage = controller.undoLastBatch(annotations, converted.remainingCandidates, history);
-        assert.strictEqual(undoMessage, 'Reverted box edit for 1 annotations.');
+        undoMessage = controller.undoLastAction(annotations, converted.remainingCandidates, history, redoHistory);
+        assert.strictEqual(undoMessage, 'Undid box edit for 1 annotation.');
         assert.deepStrictEqual(plain(annotations[0].bbox), [1, 1, 2, 2]);
-        assert.strictEqual(controller.undoLastBatch(annotations, converted.remainingCandidates, history), null);
+        redoMessage = controller.redoLastAction(annotations, converted.remainingCandidates, history, redoHistory);
+        assert.strictEqual(redoMessage, 'Redid box edit for 1 annotation.');
+        assert.deepStrictEqual(plain(annotations[0].bbox), [9, 9, 9, 9]);
+
+        const samAnnotation = {
+            id: 4,
+            bbox: [10, 10, 20, 20],
+            class: 'Nucleus',
+            type: 'sam_final',
+            contour: [[10, 10], [30, 10], [30, 30]],
+            mask_area: 275,
+            source: 'sam2',
+            predicted_iou: 0.93,
+            stability_score: 0.97
+        };
+        const geometryChanges = [{ id: 4, oldBbox: [10, 10, 20, 20], newBbox: [15, 12, 20, 20] }];
+        samAnnotation.bbox = geometryChanges[0].newBbox.slice();
+        controller.invalidateMaskGeometryForChanges([samAnnotation], geometryChanges);
+        assert.strictEqual(samAnnotation.contour, undefined);
+        assert.strictEqual(samAnnotation.mask_area, undefined);
+        assert.strictEqual(samAnnotation.source, 'sam2');
+        assert.strictEqual(samAnnotation.predicted_iou, 0.93);
+        assert.deepStrictEqual(plain(geometryChanges[0].oldMaskGeometry), {
+            contour: [[10, 10], [30, 10], [30, 30]],
+            mask_area: 275
+        });
+
+        const geometryHistory = [{ type: 'geometry_edit', changes: geometryChanges }];
+        const geometryRedo = [];
+        undoMessage = controller.undoLastAction([samAnnotation], [], geometryHistory, geometryRedo);
+        assert.strictEqual(undoMessage, 'Undid box edit for 1 annotation.');
+        assert.deepStrictEqual(plain(samAnnotation.bbox), [10, 10, 20, 20]);
+        assert.deepStrictEqual(plain(samAnnotation.contour), [[10, 10], [30, 10], [30, 30]]);
+        assert.strictEqual(samAnnotation.mask_area, 275);
+        redoMessage = controller.redoLastAction([samAnnotation], [], geometryHistory, geometryRedo);
+        assert.strictEqual(redoMessage, 'Redid box edit for 1 annotation.');
+        assert.deepStrictEqual(plain(samAnnotation.bbox), [15, 12, 20, 20]);
+        assert.strictEqual(samAnnotation.contour, undefined);
+        assert.strictEqual(samAnnotation.mask_area, undefined);
 
         const deleteHistory = [{
             type: 'convert_candidates',
-            originalCandidates: [{ id: 'cand_3', bbox: [7, 7, 7, 7] }],
-            convertedAnnotations: [{ id: 3 }]
+            candidateRecords: [{ item: { id: 'cand_3', bbox: [7, 7, 7, 7] }, index: 0 }],
+            annotationRecords: [{ item: { id: 3 }, index: 0 }]
         }];
         const deleteAnnotations = [
             { id: 3, bbox: [7, 7, 7, 7], class: 'Nucleus', type: 'sam_final', originalCandidateId: 'cand_3' }
         ];
         const deleteCandidates = [];
+        const deleteRedo = [];
         const selectedIds = new Set([3]);
-        const deleted = controller.deleteAnnotationById(
+        const deleted = controller.deleteAnnotationsByIds(
             deleteAnnotations,
             deleteCandidates,
             deleteHistory,
+            deleteRedo,
             selectedIds,
-            3
+            [3]
         );
-        assert.strictEqual(deleted.id, 3);
+        assert.strictEqual(deleted[0].id, 3);
         assert.strictEqual(deleteAnnotations.length, 0);
         assert.deepStrictEqual(plain(deleteCandidates), [{ id: 'cand_3', bbox: [7, 7, 7, 7] }]);
         assert.strictEqual(selectedIds.has(3), false);
+        undoMessage = controller.undoLastAction(deleteAnnotations, deleteCandidates, deleteHistory, deleteRedo);
+        assert.strictEqual(undoMessage, 'Undid deletion of 1 annotation.');
+        assert.strictEqual(deleteAnnotations[0].id, 3);
+        assert.strictEqual(deleteCandidates.length, 0);
+        redoMessage = controller.redoLastAction(deleteAnnotations, deleteCandidates, deleteHistory, deleteRedo);
+        assert.strictEqual(redoMessage, 'Redid deletion of 1 annotation.');
+        assert.strictEqual(deleteAnnotations.length, 0);
+        assert.strictEqual(deleteCandidates.length, 1);
+
+        const creationHistory = [];
+        const creationRedo = [{ type: 'obsolete' }];
+        const manualAnnotation = { id: 8, bbox: [1, 1, 5, 5], class: 'Nucleus', type: 'manual' };
+        const manualAnnotations = [manualAnnotation];
+        controller.recordHistoryCommand(creationHistory, creationRedo, {
+            type: 'create_annotations',
+            annotationRecords: [{ item: manualAnnotation, index: 0 }]
+        });
+        assert.strictEqual(creationRedo.length, 0);
+        controller.undoLastAction(manualAnnotations, [], creationHistory, creationRedo);
+        assert.strictEqual(manualAnnotations.length, 0);
+        controller.redoLastAction(manualAnnotations, [], creationHistory, creationRedo);
+        assert.strictEqual(manualAnnotations[0].id, 8);
+
+        const importedAnnotation = { id: 12, bbox: [9, 9, 3, 3], class: 'Imported' };
+        const replacedAnnotations = [importedAnnotation];
+        const replacementHistory = [{
+            type: 'replace_annotations',
+            beforeRecords: [{ item: manualAnnotation, index: 0 }],
+            afterRecords: [{ item: importedAnnotation, index: 0 }]
+        }];
+        const replacementRedo = [];
+        undoMessage = controller.undoLastAction(
+            replacedAnnotations,
+            [],
+            replacementHistory,
+            replacementRedo
+        );
+        assert.strictEqual(undoMessage, 'Undid annotation import.');
+        assert.deepStrictEqual(plain(replacedAnnotations), [plain(manualAnnotation)]);
+        redoMessage = controller.redoLastAction(
+            replacedAnnotations,
+            [],
+            replacementHistory,
+            replacementRedo
+        );
+        assert.strictEqual(redoMessage, 'Redid annotation import.');
+        assert.deepStrictEqual(plain(replacedAnnotations), [plain(importedAnnotation)]);
+
+        const compoundAnnotation = { id: 9, bbox: [5, 5, 8, 8], class: 'New' };
+        const compoundHistory = [
+            {
+                type: 'relabel_annotations',
+                changes: [{ id: 9, oldClass: 'Old', newClass: 'New' }]
+            },
+            {
+                type: 'geometry_edit',
+                changes: [{ id: 9, oldBbox: [1, 1, 4, 4], newBbox: [5, 5, 8, 8] }]
+            }
+        ];
+        const compoundRedo = [];
+        controller.groupHistoryCommands(compoundHistory, 0, 'combined edit');
+        assert.strictEqual(compoundHistory.length, 1);
+        assert.strictEqual(compoundHistory[0].type, 'compound');
+        undoMessage = controller.undoLastAction([compoundAnnotation], [], compoundHistory, compoundRedo);
+        assert.strictEqual(undoMessage, 'Undid combined edit.');
+        assert.strictEqual(compoundAnnotation.class, 'Old');
+        assert.deepStrictEqual(plain(compoundAnnotation.bbox), [1, 1, 4, 4]);
+        redoMessage = controller.redoLastAction([compoundAnnotation], [], compoundHistory, compoundRedo);
+        assert.strictEqual(redoMessage, 'Redid combined edit.');
+        assert.strictEqual(compoundAnnotation.class, 'New');
+        assert.deepStrictEqual(plain(compoundAnnotation.bbox), [5, 5, 8, 8]);
+
+        const classHistory = [{
+            type: 'remove_class',
+            classRecord: { item: { name: 'Nucleus', color: '#ffffff', hotkey: 'n' }, index: 0 }
+        }];
+        const classRedo = [];
+        const projectClasses = [];
+        controller.undoLastAction([], [], classHistory, classRedo, projectClasses);
+        assert.deepStrictEqual(plain(projectClasses), [{ name: 'Nucleus', color: '#ffffff', hotkey: 'n' }]);
+        controller.redoLastAction([], [], classHistory, classRedo, projectClasses);
+        assert.deepStrictEqual(plain(projectClasses), []);
 
         const normalized = controller.normalizeAnnotation(
             state,

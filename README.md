@@ -1,6 +1,6 @@
 # SAM2 Annotation Web App
 
-A local Flask web application for SAM2-assisted image annotation. The app is designed for cell, microscopy, and medical-image review workflows where a user loads images, generates SAM2 candidate masks, converts selected candidates into final annotations, edits boxes, manages classes, and exports annotations in common dataset formats.
+A local Flask web application for SAM2-assisted annotation of 2D RGB or rendered microscopy images. The current project task is bounding-box annotation for object-detection datasets: a user loads images, generates SAM2 candidate masks, converts selected candidates into final box annotations, edits boxes, manages classes, and exports annotations in common dataset formats.
 
 The project runs as a local browser UI backed by a Python server. SAM2 inference happens on the server; annotation review and editing happen in the browser.
 
@@ -11,10 +11,11 @@ The project runs as a local browser UI backed by a Python server. SAM2 inference
 - Review SAM candidates with contour-based hit testing.
 - Convert SAM candidates to final annotations with batch apply or one-click active-class accept.
 - Preserve SAM metadata including contour, mask area, source, predicted IoU, and stability score.
-- Draw manual boxes, edit boxes, nudge boxes, undo geometry/class changes, and clamp boxes to image bounds.
+- Draw manual boxes, edit and nudge boxes, and undo or redo annotation creation, deletion, SAM acceptance, relabeling, and geometry changes.
 - Manage class names, colors, and hotkeys that apply classes to the current selection.
 - Save/load annotations on the server with duplicate filename handling.
 - Match annotation files across a loaded folder, or import one annotation file into the current image.
+- Validate all loaded images and export one consolidated project-level COCO dataset.
 - Import/export CSV, YOLO TXT, COCO JSON, and Pascal VOC XML.
 - Apply preprocessing for display and SAM inference.
 - Optional API token protection for shared/local-network deployments.
@@ -30,8 +31,10 @@ static/style.css               UI styling
 scripts/check_setup.py         Environment/model sanity check
 tests/                         Unit, API, and static UI contract tests
 requirements.txt               Runtime dependencies
+requirements-ci.txt            Runtime plus pinned test and lint dependencies
 requirements-dev.txt           Test/dev dependencies
-project_settings.example.json  Example runtime settings shape
+project_manifest.example.json  Example versioned project manifest
+project_settings.example.json  Legacy settings example used during migration
 Dockerfile                     Optional container runtime
 ```
 
@@ -43,6 +46,23 @@ Dockerfile                     Optional container runtime
 - CUDA-capable GPU recommended for practical SAM2 inference.
 
 The app can start without loading SAM2 when `SKIP_SAM_MODEL_LOAD=1`, which is useful for tests and API work.
+
+## Supported Image Scope
+
+The supported workflow is local annotation of a single 2D RGB image, or a 2D image that has already been rendered or composited to RGB. JPEG, PNG, BMP, and single-image TIFF files are accepted (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, and `.tiff`). PNG is the recommended lossless interchange format. TIFF display support varies between browsers, so convert a TIFF to PNG before annotation if the browser cannot render it reliably.
+
+Images are decoded as color and converted to RGB. Annotations use pixel coordinates from that decoded 2D image; the application does not preserve source intensity values, channel identity, acquisition metadata, or physical units. The default decoded-image limit is 25,000,000 pixels and can be changed with `MAX_DECODED_IMAGE_PIXELS`.
+
+The following are not currently supported as native scientific-image data:
+
+- 16-bit or floating-point intensity preservation.
+- Independent fluorescence channels or in-app channel selection and compositing.
+- OME-TIFF metadata and dimension semantics.
+- Multipage TIFF, Z-stacks, 3D volumes, or time series as linked dimensions.
+- Whole-slide or pyramidal/tiled image navigation.
+- DICOM and other modality-specific medical-image formats.
+
+Render or export one 2D RGB plane before loading those sources. The planned instance-segmentation task will initially use this same image scope unless scientific-image decoding is expanded separately.
 
 ## SAM2 Attribution And Model Weights
 
@@ -133,7 +153,11 @@ The UI separates annotation file handling into two scopes:
 - **Batch annotation matching** matches annotation files across all loaded images.
 - **Current-image import** imports one annotation file into the current image only.
 
-Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format.
+Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format. `Validate project` checks every loaded image, stable class identity, annotation reference, bounding box, area, and polygon. `Export project COCO` runs the same validation and downloads one deterministic COCO file containing all loaded images, including unannotated images as negative examples.
+
+Project validation blocks export when the project manifest identity, class IDs, image dimensions, filenames, annotation IDs, category references, geometry, or segmentation structure are invalid. It also blocks when a saved matched annotation file is known but has not been loaded, preventing accidental false-negative images. Missing dimensions for lazily loaded folder images are inspected automatically. Unsaved in-memory annotations, unaccepted SAM candidates, ambiguous matches, and images without final annotations are reported as warnings; unsaved edits are included in the export, while candidates are not.
+
+Server-side annotations and the project manifest are written atomically. The versioned manifest is the canonical project record and contains the stable project UUID, task type, settings, and classes with persistent numeric IDs. Existing `project_settings.json` and `project_classes.json` files are migrated automatically when the first manifest is created. After a file has been saved more than once, its previous validated version is retained beside it with a `.bak` suffix. If the primary file is missing or invalid, the application reads the backup automatically; the next successful save replaces the primary while preserving a valid recovery copy.
 
 Class hotkeys apply the selected class to the current candidate or annotation selection. One-click accept is shown as an active canvas badge when enabled.
 
@@ -142,7 +166,7 @@ Class hotkeys apply the selected class to the current candidate or annotation se
 Install dev dependencies:
 
 ```powershell
-pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 Run tests without loading the SAM2 checkpoint:
@@ -150,7 +174,8 @@ Run tests without loading the SAM2 checkpoint:
 ```powershell
 $env:SKIP_SAM_MODEL_LOAD = "1"
 $env:ALLOW_ABSOLUTE_ANNOTATION_DIR = "1"
-pytest
+python -m pytest tests -q
+python -m ruff check .
 ```
 
 On Windows, if pytest cannot access the default temp directory, use a workspace-local temp directory:
@@ -158,6 +183,8 @@ On Windows, if pytest cannot access the default temp directory, use a workspace-
 ```powershell
 pytest --basetemp pytest_workspace_tmp\run -p no:cacheprovider
 ```
+
+GitHub Actions runs the same Python 3.12 test and Ruff checks on every push and pull request. The workflow installs CPU-only PyTorch, skips SAM2 checkpoint loading, and provisions Node.js so the frontend JavaScript contract tests run instead of being skipped. CI dependencies are isolated in `requirements-ci.txt`; `requirements-dev.txt` adds the optional notebook, analysis, and dataset tooling used for local development.
 
 ## Docker
 
@@ -202,7 +229,8 @@ Environment variables:
 - `PHI_HASH_SALT`: optional secret salt for stable PHI-safe image IDs.
 - `ANNOTATION_OUTPUT_DIR`: default annotation folder. Defaults to `annotations`.
 - `ANNOTATION_FORMAT`: default annotation format: `csv`, `csv_rich`, `yolo`, `coco`, or `voc`. `csv` writes simple box labels; `csv_rich` preserves SAM2 metadata.
-- `PROJECT_SETTINGS_FILE`: runtime project settings file. Defaults to `project_settings.json`.
+- `PROJECT_MANIFEST_FILE`: canonical versioned project manifest. Defaults to `project_manifest.json`.
+- `PROJECT_SETTINGS_FILE`: legacy runtime settings file used only when migrating a project without a manifest. Defaults to `project_settings.json`.
 - `ALLOWED_CORS_ORIGINS`: comma-separated allowed origins.
 - `MAX_UPLOAD_MB`: request size limit in MB.
 - `MAX_DECODED_IMAGE_PIXELS`: decoded image pixel limit for load, preprocessing, and SAM requests. Defaults to `25000000`.
@@ -215,7 +243,7 @@ Environment variables:
 - `ALLOW_ABSOLUTE_ANNOTATION_DIR`: set to `1` only if absolute annotation paths are required.
 - `SKIP_SAM_MODEL_LOAD`: set to `1` for tests or API work that should not load the SAM2 checkpoint.
 
-`project_settings.json` is local runtime state and is ignored by git. Use `project_settings.example.json` as the checked-in reference.
+`project_manifest.json` is local runtime state and is ignored by git. Use `project_manifest.example.json` as the checked-in reference. The manifest currently uses schema version `1` and task type `bounding_box`.
 
 ## Security And Privacy
 
@@ -250,9 +278,9 @@ In PHI-safe mode, original filenames and folder paths remain internal for matchi
 
 CSV saves one file per image as `*_annotations.csv`. CSV export neutralizes spreadsheet formulas in text fields.
 
-YOLO saves one `.txt` file per image using normalized `class_id x_center y_center width height` rows. Class IDs follow the current project class order.
+YOLO saves one `.txt` file per image using normalized `class_id x_center y_center width height` rows. YOLO class IDs are the manifest class ID minus one, so renaming or reordering classes does not change exported IDs. Deleted IDs are not reused and gaps may therefore remain.
 
-COCO saves one JSON dataset file per image with `images`, `categories`, and `annotations`. SAM contours are exported as polygon `segmentation` when present.
+COCO current-image export saves one JSON dataset file for the selected image. Project COCO export combines every loaded image into one validated dataset with deterministic image ordering and globally unique annotation IDs. Category IDs come directly from stable manifest class IDs. SAM contours are exported as polygon `segmentation` when present.
 
 Pascal VOC saves one XML file per image with `object/bndbox` entries.
 

@@ -15,16 +15,22 @@
     function createAppState() {
         return {
             classes: DEFAULT_CLASSES.map(cls => ({ ...cls })),
+            nextClassId: 1,
             images: [],
             currentImage: null,
             annotationsByImage: new Map(),
             candidateAnnotationsByImage: new Map(),
             annotationHistoryByImage: new Map(),
+            annotationRedoByImage: new Map(),
             annotationMatchesByImage: new Map(),
             selectedCandidateIds: new Set(),
             selectedAnnotationIds: new Set(),
             dirtyImages: new Set(),
             projectSettings: {
+                schemaVersion: 1,
+                projectId: '',
+                taskType: 'bounding_box',
+                manifestPath: 'project_manifest.json',
                 annotationOutputDir: 'annotations',
                 annotationDirDisplay: 'annotations',
                 annotationFormat: 'csv',
@@ -83,6 +89,7 @@
         if (!state.annotationsByImage.has(imageId)) state.annotationsByImage.set(imageId, []);
         if (!state.candidateAnnotationsByImage.has(imageId)) state.candidateAnnotationsByImage.set(imageId, []);
         if (!state.annotationHistoryByImage.has(imageId)) state.annotationHistoryByImage.set(imageId, []);
+        if (!state.annotationRedoByImage.has(imageId)) state.annotationRedoByImage.set(imageId, []);
     }
 
     function currentImageId(state) {
@@ -133,6 +140,19 @@
         state.annotationHistoryByImage.set(imageId, history);
     }
 
+    function currentRedoHistory(state) {
+        const imageId = currentImageId(state);
+        if (!imageId) return [];
+        if (!state.annotationRedoByImage.has(imageId)) state.annotationRedoByImage.set(imageId, []);
+        return state.annotationRedoByImage.get(imageId);
+    }
+
+    function setCurrentRedoHistory(state, history) {
+        const imageId = currentImageId(state);
+        if (!imageId) return;
+        state.annotationRedoByImage.set(imageId, history);
+    }
+
     function currentDisplayImage(state, hasActivePreprocess) {
         const imageRecord = state.currentImage;
         if (!imageRecord) return null;
@@ -165,6 +185,7 @@
         state.annotationsByImage.clear();
         state.candidateAnnotationsByImage.clear();
         state.annotationHistoryByImage.clear();
+        state.annotationRedoByImage.clear();
         state.annotationMatchesByImage.clear();
         state.selectedCandidateIds.clear();
         state.selectedAnnotationIds.clear();
@@ -198,6 +219,8 @@
         setCurrentCandidates,
         currentHistory,
         setCurrentHistory,
+        currentRedoHistory,
+        setCurrentRedoHistory,
         currentDisplayImage,
         markCurrentImageDirty,
         resetInteractionState,

@@ -11,6 +11,7 @@ from annotation_io import (
     _normalize_classes,
     _parse_float,
 )
+from atomic_io import atomic_write_file, read_with_backup, recoverable_file_exists
 
 
 def safe_image_stem(image_name):
@@ -229,7 +230,7 @@ def first_candidate(candidates, match_mode, must_exist=False):
     for candidate in candidates:
         if candidate["match_mode"] != match_mode:
             continue
-        if must_exist and not os.path.exists(candidate["path"]):
+        if must_exist and not recoverable_file_exists(candidate["path"]):
             continue
         return candidate
     return None
@@ -323,17 +324,28 @@ def resolve_annotation_match(
 
 
 def save_project_classes(classes, classes_path):
-    os.makedirs(os.path.dirname(classes_path), exist_ok=True)
-    with open(classes_path, "w", encoding="utf-8") as file:
-        json.dump({"classes": _normalize_classes(classes)}, file, indent=2)
+    payload = {"classes": _normalize_classes(classes)}
+
+    def write_classes(path):
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(payload, file, indent=2)
+
+    atomic_write_file(classes_path, write_classes, validator=_read_project_classes_json)
+
+
+def _read_project_classes_json(path):
+    with open(path, "r", encoding="utf-8") as file:
+        data = json.load(file)
+    if not isinstance(data, dict) or not isinstance(data.get("classes"), list):
+        raise ValueError("project classes must contain a classes list")
+    return data
 
 
 def load_project_classes(classes_path):
-    if not os.path.exists(classes_path):
+    if not recoverable_file_exists(classes_path):
         return []
     try:
-        with open(classes_path, "r", encoding="utf-8") as file:
-            data = json.load(file)
+        data = read_with_backup(classes_path, _read_project_classes_json)
         return _normalize_classes(data.get("classes"))
     except Exception:
         return []
