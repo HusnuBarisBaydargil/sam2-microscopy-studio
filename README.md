@@ -286,7 +286,7 @@ Pascal VOC saves one XML file per image with `object/bndbox` entries.
 
 YOLO and Pascal VOC are box-only formats. CSV and COCO preserve SAM-derived contour and metadata fields where possible.
 
-## Preprocessing And SAM
+## Preprocessing and SAM
 
 The browser can apply preprocessing for display. When preprocessing is active, SAM2 runs from the original uploaded image plus the selected preprocessing method and parameters. The server applies preprocessing immediately before SAM inference, avoiding a second upload of the processed PNG.
 
