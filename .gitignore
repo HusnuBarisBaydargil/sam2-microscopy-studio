@@ -30,3 +30,6 @@ models/*.ckpt
 
 # Local notebooks
 .ipynb_checkpoints/
+
+# Local project library
+project_manifest.json.projects/

@@ -5,8 +5,7 @@
     }
 
     const {
-        ALLOWED_IMAGE_EXTENSIONS,
-        ALLOWED_IMAGE_MIME_TYPES
+        ALLOWED_IMAGE_EXTENSIONS
     } = frontendConfig;
 
     function basename(path) {
@@ -75,10 +74,8 @@
 
     function isSupportedImageFile(file) {
         const lowerName = String(file?.name || '').toLowerCase();
-        const hasAllowedExtension = ALLOWED_IMAGE_EXTENSIONS.some(extension => lowerName.endsWith(extension));
-        if (!hasAllowedExtension) return false;
-        if (!file.type) return true;
-        return ALLOWED_IMAGE_MIME_TYPES.has(file.type.toLowerCase());
+        // MIME is only a browser/OS hint; the server validates encoded content.
+        return ALLOWED_IMAGE_EXTENSIONS.some(extension => lowerName.endsWith(extension));
     }
 
     function imageSortName(file) {

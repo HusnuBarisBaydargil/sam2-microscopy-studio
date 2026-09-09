@@ -1,301 +1,154 @@
-# SAM2 Annotation Web App
+# Microscopy Studio
 
-A local Flask web application for SAM2-assisted annotation of 2D RGB or rendered microscopy images. The current project task is bounding-box annotation for object-detection datasets: a user loads images, generates SAM2 candidate masks, converts selected candidates into final box annotations, edits boxes, manages classes, and exports annotations in common dataset formats.
+A local annotation tool for building object-detection datasets from microscopy images. Use SAM2 to suggest objects, or draw boxes yourself, then assign classes, review your images, and export the labels.
 
-The project runs as a local browser UI backed by a Python server. SAM2 inference happens on the server; annotation review and editing happen in the browser.
+![Microscopy Studio with three annotated synthetic objects](assets/microscopy-studio.png)
+*The current interface, shown with synthetic objects and manually drawn boxes. No research or patient data is shown.*
 
-## Features
+- Open individual images or a folder, with search and review filters.
+- Generate SAM2 candidates, draw and edit boxes, and undo or redo changes.
+- Create your own classes, colors, and keyboard shortcuts.
+- Keep projects separate and export CSV, YOLO, COCO, or Pascal VOC annotations.
 
-- Load a single image or a browser-selected image folder.
-- Generate SAM2 candidate masks with presets and expert settings.
-- Review SAM candidates with contour-based hit testing.
-- Convert SAM candidates to final annotations with batch apply or one-click active-class accept.
-- Preserve SAM metadata including contour, mask area, source, predicted IoU, and stability score.
-- Draw manual boxes, edit and nudge boxes, and undo or redo annotation creation, deletion, SAM acceptance, relabeling, and geometry changes.
-- Manage class names, colors, and hotkeys that apply classes to the current selection.
-- Save/load annotations on the server with duplicate filename handling.
-- Match annotation files across a loaded folder, or import one annotation file into the current image.
-- Validate all loaded images and export one consolidated project-level COCO dataset.
-- Import/export CSV, YOLO TXT, COCO JSON, and Pascal VOC XML.
-- Apply preprocessing for display and SAM inference.
-- Optional API token protection for shared/local-network deployments.
-- Optional PHI-safe mode that hides image filenames and paths behind generated IDs.
+## Get started
 
-## Repository Layout
-
-```text
-app.py                         Flask API, SAM2 loading, preprocessing, annotation IO
-static/index.html              Browser UI
-static/script.js               Frontend state, canvas interaction, API calls, import/export
-static/style.css               UI styling
-scripts/check_setup.py         Environment/model sanity check
-tests/                         Unit, API, and static UI contract tests
-requirements.txt               Runtime dependencies
-requirements-ci.txt            Runtime plus pinned test and lint dependencies
-requirements-dev.txt           Test/dev dependencies
-project_manifest.example.json  Example versioned project manifest
-project_settings.example.json  Legacy settings example used during migration
-Dockerfile                     Optional container runtime
-```
-
-## Requirements
-
-- Python 3.12.
-- A SAM2 checkpoint at `models/sam2.1_hiera_large.pt`.
-- A SAM2 config at `models/sam2.1_hiera_l.yaml`.
-- CUDA-capable GPU recommended for practical SAM2 inference.
-
-The app can start without loading SAM2 when `SKIP_SAM_MODEL_LOAD=1`, which is useful for tests and API work.
-
-## Supported Image Scope
-
-The supported workflow is local annotation of a single 2D RGB image, or a 2D image that has already been rendered or composited to RGB. JPEG, PNG, BMP, and single-image TIFF files are accepted (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, and `.tiff`). PNG is the recommended lossless interchange format. TIFF display support varies between browsers, so convert a TIFF to PNG before annotation if the browser cannot render it reliably.
-
-Images are decoded as color and converted to RGB. Annotations use pixel coordinates from that decoded 2D image; the application does not preserve source intensity values, channel identity, acquisition metadata, or physical units. The default decoded-image limit is 25,000,000 pixels and can be changed with `MAX_DECODED_IMAGE_PIXELS`.
-
-The following are not currently supported as native scientific-image data:
-
-- 16-bit or floating-point intensity preservation.
-- Independent fluorescence channels or in-app channel selection and compositing.
-- OME-TIFF metadata and dimension semantics.
-- Multipage TIFF, Z-stacks, 3D volumes, or time series as linked dimensions.
-- Whole-slide or pyramidal/tiled image navigation.
-- DICOM and other modality-specific medical-image formats.
-
-Render or export one 2D RGB plane before loading those sources. The planned instance-segmentation task will initially use this same image scope unless scientific-image decoding is expanded separately.
-
-## SAM2 Attribution And Model Weights
-
-This project is an annotation interface built around Meta FAIR's Segment Anything Model 2 (SAM2). It is not an official Meta project.
-
-SAM2 resources:
-
-- Paper: [SAM 2: Segment Anything in Images and Videos](https://arxiv.org/abs/2408.00714)
-- Official project page: [Meta Segment Anything Model 2](https://ai.meta.com/research/sam2/)
-- Official GitHub repository: [facebookresearch/sam2](https://github.com/facebookresearch/sam2)
-- SAM2.1 large checkpoint: [sam2.1_hiera_large.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt)
-
-Model checkpoint files are intentionally not committed to this repository because they are large binary artifacts. For local non-Docker runs, download the official SAM2 checkpoint link above and place it here:
-
-```text
-models/sam2.1_hiera_large.pt
-```
-
-The model config file should be present here:
-
-```text
-models/sam2.1_hiera_l.yaml
-```
-
-Expected local layout:
-
-```text
-models/
-  sam2.1_hiera_l.yaml
-  sam2.1_hiera_large.pt
-```
-
-If you use this annotator in research or publish results produced with SAM2, cite the SAM2 paper:
-
-```bibtex
-@article{ravi2024sam2,
-  title={SAM 2: Segment Anything in Images and Videos},
-  author={Ravi, Nikhila and Gabeur, Valentin and Hu, Yuan-Ting and Hu, Ronghang and Ryali, Chaitanya and Ma, Tengyu and Khedr, Haitham and R{\"a}dle, Roman and Rolland, Chloe and Gustafson, Laura and Mintun, Eric and Pan, Junting and Alwala, Kalyan Vasudev and Carion, Nicolas and Wu, Chao-Yuan and Girshick, Ross and Doll{\'a}r, Piotr and Feichtenhofer, Christoph},
-  journal={arXiv preprint arXiv:2408.00714},
-  url={https://arxiv.org/abs/2408.00714},
-  year={2024}
-}
-```
-
-## Local Setup
-
-Create an environment and install runtime dependencies:
+You need **Python 3.12** and the SAM2.1 large model. An NVIDIA GPU with a compatible driver is recommended; CPU inference is available but slower. The commands below use **Windows PowerShell and Conda**, from the repository folder.
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+conda create -n microscopy-studio python=3.12 -y
+conda activate microscopy-studio
+python -m pip install -r requirements.txt
 ```
 
-Place the SAM2 model files under `models/`:
+For NVIDIA acceleration, use the [official PyTorch installation instructions](https://pytorch.org/get-started/previous-versions/#v251) for **PyTorch 2.5.1 and torchvision 0.20.1**, matching this project's requirements and your GPU. A compatible CUDA-enabled build is needed for GPU inference.
 
-```text
-models/
-  sam2.1_hiera_l.yaml
-  sam2.1_hiera_large.pt
-```
-
-If the checkpoint is missing, the app can still start only when `SKIP_SAM_MODEL_LOAD=1`, but SAM2 inference will be unavailable.
-
-Validate the setup:
+Download the official [SAM2.1 large checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt) into `models/sam2.1_hiera_large.pt`. Copy the included model configuration, then check and launch the app:
 
 ```powershell
+New-Item -ItemType Directory -Force models | Out-Null
+Copy-Item sam2/configs/sam2.1/sam2.1_hiera_l.yaml models/sam2.1_hiera_l.yaml
 python scripts/check_setup.py
-```
-
-Run the app:
-
-```powershell
 python app.py
 ```
 
-Open:
+Open **http://127.0.0.1:5000** in your browser. The app uses Waitress and runs locally; images are processed by your Python server.
 
-```text
-http://127.0.0.1:5000
-```
+## Annotate an image
 
-## Annotation Workflow Notes
+1. **Open images.** Choose **Load Image** or **Open Folder**.
+2. **Create classes.** Name the objects you want to label. Classes start empty in a new project.
+3. **Add annotations.** Generate SAM2 candidates and assign a class to accept them, or use **Manual Box (B)** to draw your own. Select an annotation to edit its coordinates; Undo and Redo are available.
+4. **Review.** Check the whole image, then choose **Mark reviewed & next**. Use **Confirm empty & next** only when there are no target objects. Both actions save before advancing.
+5. **Export.** Open **Project & export**, choose a format, and export the current image. For a complete dataset, review every loaded image and choose **Export whole project (COCO)**.
 
-The UI separates annotation file handling into two scopes:
+**Save** stores annotations in the project's folder without marking the image reviewed. Pending annotation or class edits remain flagged as unsaved. Editing a reviewed image, or changing class names/IDs, requires another review. Unaccepted SAM candidates are not final annotations and are excluded from exports.
 
-- **Batch annotation matching** matches annotation files across all loaded images.
-- **Current-image import** imports one annotation file into the current image only.
+Use **?** for shortcuts. The side panels collapse to give the image more room. SAM2 presets cover routine use; device controls and tuning are under **Advanced settings**, with image preprocessing available separately. Active preprocessing affects both the display and SAM2 input while preserving the source file.
 
-Save and export actions operate on annotations, not the original microscopy image. `Save current annotations` writes the current image's annotations to the server annotation folder. `Export current annotations` downloads annotations in the selected format. `Validate project` checks every loaded image, stable class identity, annotation reference, bounding box, area, and polygon. `Export project COCO` runs the same validation and downloads one deterministic COCO file containing all loaded images, including unannotated images as negative examples.
+### Projects and saved work
 
-Project validation blocks export when the project manifest identity, class IDs, image dimensions, filenames, annotation IDs, category references, geometry, or segmentation structure are invalid. It also blocks when a saved matched annotation file is known but has not been loaded, preventing accidental false-negative images. Missing dimensions for lazily loaded folder images are inspected automatically. Unsaved in-memory annotations, unaccepted SAM candidates, ambiguous matches, and images without final annotations are reported as warnings; unsaved edits are included in the export, while candidates are not.
+Each `python app.py` launch starts a fresh project and archives the previous one. Reopen saved work through **Project & export → New / Open project**; refreshing the browser keeps the current project. After reopening a project, select its source images again.
 
-Server-side annotations and the project manifest are written atomically. The versioned manifest is the canonical project record and contains the stable project UUID, task type, settings, and classes with persistent numeric IDs. Existing `project_settings.json` and `project_classes.json` files are migrated automatically when the first manifest is created. After a file has been saved more than once, its previous validated version is retained beside it with a `.bak` suffix. If the primary file is missing or invalid, the application reads the backup automatically; the next successful save replaces the primary while preserving a valid recovery copy.
+Opening another image folder does not switch projects. One server has one active project, so other tabs must reload after a project switch. Back up the annotation folders, their `.review.json` sidecars, `project_manifest.json`, and `project_manifest.json.projects/` together. Previous saved file versions are retained as `.bak` recovery copies.
 
-Class hotkeys apply the selected class to the current candidate or annotation selection. One-click accept is shown as an active canvas badge when enabled.
+### Import and export
 
-## Running Tests
+| Format | Best suited to | Contents |
+|---|---|---|
+| Simple CSV | Basic label exchange | Boxes and classes |
+| Rich CSV | Keeping SAM2 information | Boxes, contours, and available model metadata |
+| YOLO TXT | Object-detection training | Normalized boxes and class IDs |
+| COCO JSON | Dataset interchange | Boxes and available SAM contours; current image or whole project |
+| Pascal VOC XML | VOC-compatible tools | Boxes and classes |
 
-Install dev dependencies:
+The **current-image export format** is independent of the project's save/import format, which is set under **Batch annotation matching**. Use that panel to match and import labels across loaded images, or **Current-image import** for one file. Imports replace the affected annotations.
+
+Current-image exports can contain draft work. Whole-project COCO export requires reviewed images and valid annotations; unresolved matches and invalid geometry block it. Confirmed-empty images become negative examples. Class IDs stay stable when classes are renamed or reordered; deleted IDs are not reused, so YOLO IDs may contain gaps. Keep the matching class-ID mapping with your training data.
+
+## Supported images
+
+Common formats include **PNG, JPEG, BMP, TIFF, and WebP**, plus single-frame GIF, JPEG 2000, PNM, PCX, TGA, SGI, ICO, QOI, and XBM. Some formats depend on codecs available in Pillow.
+
+The app works with **single 2D images converted to 8-bit RGB**. It does not preserve scientific intensities, physical units, or channel metadata. Render a 2D plane first for multichannel data, Z-stacks, time series, whole-slide images, or DICOM. Ambiguous multipage images and animations are rejected; TIFFs with a supported reduced overview are accepted. RAW, HEIC/HEIF, AVIF, SVG/PDF, and proprietary microscopy formats need conversion.
+
+EXIF orientation is applied before display and annotation. Pair exported labels with images normalized to that same orientation. Original files are unchanged. The default decoded-image limit is **25 million pixels**.
+
+## Configuration and troubleshooting
+
+Most settings can stay at their defaults. If SAM2 is unavailable, check both files in `models/` and run `python scripts/check_setup.py`. For memory errors, try a lighter preset or reduce sampling in Advanced settings. Load the image before importing YOLO labels so its dimensions are available.
+
+For duplicate filenames, use path-specific annotation matching. On a shared server, configure authentication and network access deliberately; the default address is localhost. PHI-safe mode hides identifying filenames in the interface and exports, but does not anonymize image pixels.
+
+<details>
+<summary>Environment variables</summary>
+
+Set variables in PowerShell before launching, for example: `$env:APP_PORT = "5001"`.
+
+| Variable | Purpose |
+|---|---|
+| `APP_HOST`, `APP_PORT` | Bind address and port; default `127.0.0.1:5000` |
+| `APP_API_TOKEN` / `API_TOKEN` | Optional API bearer token; clients send `Authorization: Bearer …` or `X-API-Token` |
+| `PHI_SAFE_MODE`, `PHI_HASH_SALT` | Set mode to `1` and supply a secret salt for stable anonymized filenames |
+| `ANNOTATION_OUTPUT_DIR` | Default annotation folder; `annotations` |
+| `ANNOTATION_FORMAT` | Save/import default: `csv`, `csv_rich`, `yolo`, `coco`, or `voc` |
+| `PROJECT_MANIFEST_FILE` | Project manifest; `project_manifest.json` |
+| `PROJECT_SETTINGS_FILE` | Legacy settings file used during initial migration |
+| `ALLOWED_CORS_ORIGINS` | Allowed browser origins, comma-separated |
+| `MAX_UPLOAD_MB`, `MAX_DECODED_IMAGE_PIXELS` | Upload and decoded-image limits |
+| `SAM_DEVICE` | `auto`, `cuda`, or `cpu` |
+| `SAM_MAX_CONCURRENT_REQUESTS` | Concurrent inference jobs; default `1` |
+| `SAM_QUEUE_TIMEOUT_SECONDS` | Queue wait limit; default `5` seconds |
+| `SAM_INFERENCE_TIMEOUT_SECONDS` | Request wait limit for inference; default `300` seconds |
+| `MAX_ANNOTATIONS_PER_SAVE`, `MAX_CLASSES_PER_PROJECT` | Annotation and class limits |
+| `ALLOW_ABSOLUTE_ANNOTATION_DIR` | Set to `1` if absolute annotation paths are needed |
+| `SKIP_SAM_MODEL_LOAD` | Set to `1` for UI/API work without inference |
+
+The [example manifest](project_manifest.example.json) shows the project structure. Existing projects retain their saved settings.
+
+</details>
+
+<details>
+<summary>Docker</summary>
+
+The image downloads the SAM2.1 large checkpoint during the build. This example persists project state and annotations in `studio-data` and exposes the app only on localhost:
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+docker build -t microscopy-studio .
+docker run --rm -p 127.0.0.1:5000:5000 `
+  -v "${PWD}/studio-data:/app/data" `
+  -e PROJECT_MANIFEST_FILE=/app/data/project_manifest.json `
+  -e ANNOTATION_OUTPUT_DIR=/app/data/annotations `
+  microscopy-studio
 ```
 
-Run tests without loading the SAM2 checkpoint:
+For a local model mount, add `-v "${PWD}/models:/app/models"`; it must contain both model files. GPU use also requires a GPU-enabled container runtime and compatible PyTorch installation.
+
+</details>
+
+<details>
+<summary>Development and tests</summary>
+
+`app.py` coordinates the API; decoding, annotation formats, review persistence, and SAM2 inference have separate Python modules. The current UI uses `static/index-refined.html`, `script-refined.js`, and `style-refined.css`, with shared controllers. The preserved original interface is available at `?ui=original`; project-aware writes require the refined UI once a project library exists. Vendored upstream SAM2 code lives in `sam2/`.
+
+Run tests with isolated runtime files and model loading disabled:
 
 ```powershell
+python -m pip install -r requirements-ci.txt
+New-Item -ItemType Directory -Force .tmp/tests | Out-Null
 $env:SKIP_SAM_MODEL_LOAD = "1"
-$env:ALLOW_ABSOLUTE_ANNOTATION_DIR = "1"
+$env:PROJECT_SETTINGS_FILE = "$PWD/.tmp/tests/settings.json"
+$env:PROJECT_MANIFEST_FILE = "$PWD/.tmp/tests/manifest.json"
+$env:ANNOTATION_OUTPUT_DIR = "$PWD/.tmp/tests/annotations"
 python -m pytest tests -q
 python -m ruff check .
 ```
 
-On Windows, if pytest cannot access the default temp directory, use a workspace-local temp directory:
+Node.js is needed for frontend tests. GitHub Actions runs the Python and frontend checks with CPU-only PyTorch. If Windows denies access to pytest temporary files, choose a new writable directory with `--basetemp`. Unset the test environment variables before returning to normal use, or open a new terminal.
 
-```powershell
-pytest --basetemp pytest_workspace_tmp\run -p no:cacheprovider
-```
+</details>
 
-GitHub Actions runs the same Python 3.12 test and Ruff checks on every push and pull request. The workflow installs CPU-only PyTorch, skips SAM2 checkpoint loading, and provisions Node.js so the frontend JavaScript contract tests run instead of being skipped. CI dependencies are isolated in `requirements-ci.txt`; `requirements-dev.txt` adds the optional notebook, analysis, and dataset tooling used for local development.
+## Acknowledgements
 
-## Docker
+Microscopy Studio builds on **Meta FAIR's Segment Anything Model 2** and is not an official Meta project. Model weights are downloaded separately and are not committed here. If SAM2 contributes to your research, please cite [Ravi et al., *SAM 2: Segment Anything in Images and Videos* (2024)](https://arxiv.org/abs/2408.00714).
 
-Local checkpoint files remain excluded from the Docker build context by `.dockerignore`, so model checkpoints are not committed and are not copied from your workstation into the image. Instead, the Docker build installs a minimal download tool and downloads the SAM2.1 large checkpoint automatically into:
-
-```text
-/app/models/sam2.1_hiera_large.pt
-```
-
-Build an image with the checkpoint baked in:
-
-```powershell
-docker build -t sam2-annotator .
-docker run --rm -p 5000:5000 `
-  -v ${PWD}\annotations:/app/annotations `
-  sam2-annotator
-```
-
-If you do not want the checkpoint baked into the runtime container, you can mount a local `models/` directory instead. A bind mount at `/app/models` takes precedence over the checkpoint downloaded during build, so make sure the mounted directory contains both `sam2.1_hiera_l.yaml` and `sam2.1_hiera_large.pt`:
-
-```powershell
-docker run --rm -p 5000:5000 `
-  -v ${PWD}\models:/app/models `
-  -v ${PWD}\annotations:/app/annotations `
-  sam2-annotator
-```
-
-Open:
-
-```text
-http://127.0.0.1:5000
-```
-
-## Configuration
-
-Environment variables:
-
-- `APP_HOST`: Flask bind host. Defaults to `127.0.0.1`; Docker sets `0.0.0.0`.
-- `APP_PORT`: Flask port. Defaults to `5000`.
-- `APP_API_TOKEN` or `API_TOKEN`: optional bearer token for `/api/*` endpoints.
-- `PHI_SAFE_MODE`: set to `1` to hide image filenames, folder paths, annotation paths, and saved export image names behind generated IDs.
-- `PHI_HASH_SALT`: optional secret salt for stable PHI-safe image IDs.
-- `ANNOTATION_OUTPUT_DIR`: default annotation folder. Defaults to `annotations`.
-- `ANNOTATION_FORMAT`: default annotation format: `csv`, `csv_rich`, `yolo`, `coco`, or `voc`. `csv` writes simple box labels; `csv_rich` preserves SAM2 metadata.
-- `PROJECT_MANIFEST_FILE`: canonical versioned project manifest. Defaults to `project_manifest.json`.
-- `PROJECT_SETTINGS_FILE`: legacy runtime settings file used only when migrating a project without a manifest. Defaults to `project_settings.json`.
-- `ALLOWED_CORS_ORIGINS`: comma-separated allowed origins.
-- `MAX_UPLOAD_MB`: request size limit in MB.
-- `MAX_DECODED_IMAGE_PIXELS`: decoded image pixel limit for load, preprocessing, and SAM requests. Defaults to `25000000`.
-- `SAM_MAX_CONCURRENT_REQUESTS`: maximum concurrent SAM2 inference jobs. Defaults to `1`.
-- `SAM_QUEUE_TIMEOUT_SECONDS`: seconds a SAM2 request can wait for an inference slot. Defaults to `5`.
-- `SAM_INFERENCE_TIMEOUT_SECONDS`: seconds a SAM2 request can wait for inference to finish before timeout. Defaults to `300`.
-- `SAM_DEVICE`: SAM2 device preference: `auto`, `cuda`, or `cpu`. Defaults to `auto`.
-- `MAX_ANNOTATIONS_PER_SAVE`: maximum annotations accepted in one save request.
-- `MAX_CLASSES_PER_PROJECT`: maximum project classes.
-- `ALLOW_ABSOLUTE_ANNOTATION_DIR`: set to `1` only if absolute annotation paths are required.
-- `SKIP_SAM_MODEL_LOAD`: set to `1` for tests or API work that should not load the SAM2 checkpoint.
-
-`project_manifest.json` is local runtime state and is ignored by git. Use `project_manifest.example.json` as the checked-in reference. The manifest currently uses schema version `1` and task type `bounding_box`.
-
-## Security And Privacy
-
-The app is safe for trusted localhost use by default. For shared workstations, lab servers, or any non-localhost deployment, set an API token:
-
-```powershell
-$env:APP_API_TOKEN = "replace-with-a-long-random-token"
-```
-
-When token protection is enabled, API requests require either:
-
-```text
-Authorization: Bearer <token>
-```
-
-or:
-
-```text
-X-API-Token: <token>
-```
-
-For privacy-sensitive datasets, enable PHI-safe mode:
-
-```powershell
-$env:PHI_SAFE_MODE = "1"
-$env:PHI_HASH_SALT = "replace-with-a-secret-salt"
-```
-
-In PHI-safe mode, original filenames and folder paths remain internal for matching, but the UI, API response paths, annotation filenames, and CSV/COCO/VOC image-name fields use generated image IDs.
-
-## Annotation Formats
-
-CSV saves one file per image as `*_annotations.csv`. CSV export neutralizes spreadsheet formulas in text fields.
-
-YOLO saves one `.txt` file per image using normalized `class_id x_center y_center width height` rows. YOLO class IDs are the manifest class ID minus one, so renaming or reordering classes does not change exported IDs. Deleted IDs are not reused and gaps may therefore remain.
-
-COCO current-image export saves one JSON dataset file for the selected image. Project COCO export combines every loaded image into one validated dataset with deterministic image ordering and globally unique annotation IDs. Category IDs come directly from stable manifest class IDs. SAM contours are exported as polygon `segmentation` when present.
-
-Pascal VOC saves one XML file per image with `object/bndbox` entries.
-
-YOLO and Pascal VOC are box-only formats. CSV and COCO preserve SAM-derived contour and metadata fields where possible.
-
-## Preprocessing And SAM
-
-The browser can apply preprocessing for display. When preprocessing is active, SAM2 runs from the original uploaded image plus the selected preprocessing method and parameters. The server applies preprocessing immediately before SAM inference, avoiding a second upload of the processed PNG.
-
-Supported preprocessing methods include CLAHE, gamma, CLAHE plus unsharp, gamma plus unsharp, and mild Retinex.
-
-## Troubleshooting
-
-- If SAM2 is unavailable, confirm both model files exist and run `python scripts/check_setup.py`.
-- If Docker starts but SAM2 cannot run, confirm the build downloaded `/app/models/sam2.1_hiera_large.pt`; if mounting `models/`, confirm the mounted directory contains both the config and checkpoint.
-- If YOLO import fails, load the image first so the browser can provide image width and height.
-- If duplicate image names are used in a folder, use path-specific saves or keep filenames unique.
-- If pytest fails on Windows temp permissions, run with `--basetemp` pointed at a writable workspace folder.
+[Official SAM2 repository](https://github.com/facebookresearch/sam2) · [Project page](https://ai.meta.com/research/sam2/)

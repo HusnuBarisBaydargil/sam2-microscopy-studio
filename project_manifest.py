@@ -94,6 +94,7 @@ def normalize_project_manifest(
         "schema_version": PROJECT_MANIFEST_SCHEMA_VERSION,
         "project_id": project_id,
         "task_type": task_type,
+        "name": str(raw_manifest.get("name") or "Existing project").strip()[:120],
         "next_class_id": next_class_id,
         "settings": settings,
         "classes": classes,

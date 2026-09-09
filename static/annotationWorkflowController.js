@@ -49,7 +49,8 @@
         return imageController.imagePayloads(images);
     }
 
-    async function refreshServerAnnotationMatches(state, { format }) {
+    async function refreshServerAnnotationMatches(state, { format, isCurrent = () => true }) {
+        if (!isCurrent()) return { stale: true };
         if (state.images.length === 0) {
             clearAnnotationMatches(state);
             return { skipped: true };
@@ -59,9 +60,11 @@
             images: imagePayloads(state.images),
             format
         });
+        if (!isCurrent()) return { stale: true };
         if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
 
         const data = await response.json();
+        if (!isCurrent()) return { stale: true };
         if (data.error) throw new Error(data.error);
 
         state.annotationMatchesByImage.clear();
@@ -79,8 +82,10 @@
     async function refreshLocalAnnotationMatches(state, {
         format,
         parseAnnotationFile,
-        displayForImage
+        displayForImage,
+        isCurrent = () => true
     }) {
+        if (!isCurrent()) return { stale: true };
         if (state.images.length === 0 || !localAnnotationSourceActive(state.annotationSource)) {
             clearAnnotationMatches(state);
             return { skipped: true };
@@ -92,7 +97,8 @@
         for (const imageRecord of state.images) {
             const match = resolveLocalAnnotationMatch(state, imageRecord, duplicateStems, format, displayForImage);
             if (match.status === 'matched') {
-                match.annotation_count = await countLocalAnnotationFile(match.sourceFile, format, imageRecord, parseAnnotationFile);
+                match.annotation_count = await countLocalAnnotationFile(match.sourceFile, format, imageRecord, parseAnnotationFile, isCurrent);
+                if (!isCurrent()) return { stale: true };
             }
             results.push(match);
         }
@@ -107,17 +113,21 @@
     async function loadServerMatchedAnnotations(state, {
         format,
         setAnnotationsForImage,
-        applyLoadedClasses
+        applyLoadedClasses,
+        isCurrent = () => true
     }) {
+        if (!isCurrent()) return { stale: true };
         if (state.images.length === 0) return { loadedCount: 0, annotationCount: 0, summary: state.matchSummary };
 
         const response = await apiWorkflows.bulkLoadAnnotations({
             images: imagePayloads(state.images),
             format
         });
+        if (!isCurrent()) return { stale: true };
         if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
 
         const data = await response.json();
+        if (!isCurrent()) return { stale: true };
         if (data.error) throw new Error(data.error);
 
         if (Array.isArray(data.classes)) {
@@ -139,7 +149,7 @@
             const normalizedAnnotations = setAnnotationsForImage(
                 imageRecord,
                 result.annotations || [],
-                { markDirty: false }
+                { markDirty: false, reviewStatus: result.review_status }
             );
             annotationCount += normalizedAnnotations.length;
             loadedCount++;
@@ -153,11 +163,14 @@
     async function loadLocalMatchedAnnotations(state, {
         format,
         parseAnnotationFile,
-        setAnnotationsForImage
+        setAnnotationsForImage,
+        isCurrent = () => true
     }) {
+        if (!isCurrent()) return { stale: true };
         let loadedCount = 0;
         let annotationCount = 0;
         let errorCount = 0;
+        const pendingResults = [];
 
         for (const imageRecord of state.images) {
             const match = state.annotationMatchesByImage.get(imageRecord.id);
@@ -165,24 +178,32 @@
 
             try {
                 const text = await match.sourceFile.text();
+                if (!isCurrent()) return { stale: true };
                 const result = parseAnnotationFile(text, format, imageRecord);
-                const normalizedAnnotations = setAnnotationsForImage(
-                    imageRecord,
-                    result.annotations || [],
-                    { markDirty: false }
-                );
+                pendingResults.push({ imageRecord, match, annotations: result.annotations || [] });
+            } catch (error) {
+                if (!isCurrent()) return { stale: true };
+                pendingResults.push({ imageRecord, match, error });
+            }
+        }
+
+        // Read every file before changing state so a stale batch cannot partly apply.
+        for (const { imageRecord, match, annotations, error } of pendingResults) {
+            try {
+                if (error) throw error;
+                const normalizedAnnotations = setAnnotationsForImage(imageRecord, annotations, { markDirty: false });
                 annotationCount += normalizedAnnotations.length;
                 loadedCount++;
                 imageRecord.serverAnnotationsChecked = true;
                 state.dirtyImages.delete(imageRecord.id);
-            } catch (error) {
+            } catch (loadError) {
                 errorCount++;
                 state.annotationMatchesByImage.set(imageRecord.id, {
                     ...match,
                     status: 'error',
                     exists: false,
                     annotations: [],
-                    message: `Failed to load local annotations: ${error.message}`
+                    message: `Failed to load local annotations: ${loadError.message}`
                 });
             }
         }
@@ -219,11 +240,14 @@
         imageId,
         format,
         matchMode,
-        imageSize
+        imageSize,
+        isCurrent = () => true
     }) {
+        if (!isCurrent()) return { stale: true };
         const params = new URLSearchParams({
             image_name: imageRecord.name,
             image_path: imageRecord.displayPath,
+            image_identity: imageRecord.id,
             match_mode: matchMode,
             format
         });
@@ -233,9 +257,11 @@
         }
 
         const response = await apiWorkflows.loadAnnotations(params);
+        if (!isCurrent()) return { stale: true };
         if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
 
         const data = await response.json();
+        if (!isCurrent()) return { stale: true };
         if (data.error) throw new Error(data.error);
 
         imageRecord.serverAnnotationsChecked = true;
@@ -256,14 +282,19 @@
         imageSize,
         confirmOverwrite = false,
         confirmConflict,
-        display
+        display,
+        isCurrent = () => true,
+        reviewStatus = imageRecord.reviewStatus || (annotations.length ? 'in_progress' : 'unreviewed')
     }) {
+        if (!isCurrent()) return { stale: true };
         const payload = {
             image_name: imageRecord.name,
             image_path: imageRecord.displayPath,
             match_mode: matchMode,
             format,
             overwrite: !confirmOverwrite,
+            review_status: reviewStatus,
+            image_identity: imageRecord.id,
             annotations,
             classes,
             image_width: imageSize ? imageSize.width : null,
@@ -271,14 +302,19 @@
         };
 
         const response = await apiWorkflows.saveAnnotations(payload);
+        if (!isCurrent()) return { stale: true };
 
         if (response.status === 409 && confirmOverwrite) {
             const conflictData = await response.json();
+            if (!isCurrent()) return { stale: true };
             if (!confirmConflict(conflictData)) throw new Error('Save cancelled.');
+            if (!isCurrent()) return { stale: true };
 
             const overwriteResponse = await apiWorkflows.saveAnnotations({ ...payload, overwrite: true });
+            if (!isCurrent()) return { stale: true };
             if (!overwriteResponse.ok) throw new Error(`Server error: ${overwriteResponse.statusText}`);
             const overwriteData = await overwriteResponse.json();
+            if (!isCurrent()) return { stale: true };
             if (overwriteData.error) throw new Error(overwriteData.error);
             updateAnnotationMatchAfterSave(state, imageRecord, overwriteData, { format, matchMode, display });
             return overwriteData;
@@ -287,6 +323,7 @@
         if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
 
         const data = await response.json();
+        if (!isCurrent()) return { stale: true };
         if (data.error) throw new Error(data.error);
         updateAnnotationMatchAfterSave(state, imageRecord, data, { format, matchMode, display });
         return data;
@@ -298,6 +335,7 @@
 
     function setAnnotationsForImage(state, imageRecord, annotations, {
         markDirty,
+        reviewStatus,
         normalizeAnnotation,
         ensureClassesForAnnotations,
         scheduleProjectClassesSave,
@@ -311,6 +349,8 @@
             .filter(Boolean);
 
         state.annotationsByImage.set(imageRecord.id, normalizedAnnotations);
+        imageRecord.reviewStatus = markDirty ? 'in_progress'
+            : imageController.normalizeReviewStatus(reviewStatus, normalizedAnnotations.length);
         if (markDirty) {
             const history = state.annotationHistoryByImage.get(imageRecord.id) || [];
             const redoHistory = state.annotationRedoByImage.get(imageRecord.id) || [];
@@ -363,10 +403,11 @@
         );
     }
 
-    async function countLocalAnnotationFile(file, annotationFormat, imageRecord, parseAnnotationFile) {
+    async function countLocalAnnotationFile(file, annotationFormat, imageRecord, parseAnnotationFile, isCurrent = () => true) {
         if (!file) return 0;
         try {
             const text = await file.text();
+            if (!isCurrent()) return null;
             return parseAnnotationFile(text, annotationFormat, imageRecord).annotations.length;
         } catch {
             return null;

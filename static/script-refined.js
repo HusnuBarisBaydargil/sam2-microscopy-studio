@@ -118,7 +118,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const {
         normalizeClassName,
         normalizeHotkey,
-        getUniqueClassName,
         classExists,
         normalizeClassList
     } = classManagerLogic;
@@ -271,9 +270,104 @@ document.addEventListener('DOMContentLoaded', () => {
     let annotationSavePending = false;
     let annotationDirectoryChangePending = false;
     let classSaveTimer = null;
+    let classChangesPending = false;
+    let classSaveQueue = Promise.resolve();
     let samSettingsReturnFocus = null;
     let preprocessSettingsReturnFocus = null;
     let helpReturnFocus = null;
+
+    const projectDialog = document.getElementById('projectDialog');
+    const projectStatus = document.getElementById('projectDialogStatus');
+    const projectSelect = document.getElementById('savedProjectSelect');
+    let projectSwitchPending = false;
+    async function projectRequest(payload) {
+        const response = await window.SAM2ApiClient.apiFetch('api/project/projects', payload ? {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        } : {});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not access projects');
+        return data;
+    }
+    document.getElementById('manageProjectsBtn').addEventListener('click', async () => {
+        projectStatus.textContent = 'Loading projects…';
+        projectDialog.showModal();
+        document.getElementById('reuseProjectClasses').checked = false;
+        try {
+            const data = await projectRequest();
+            projectSelect.replaceChildren();
+            data.projects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project.project_id;
+                option.textContent = `${project.name} (${project.class_count} classes) · ${project.project_id.slice(0, 8)}`;
+                option.selected = project.project_id === data.active_project_id;
+                projectSelect.appendChild(option);
+            });
+            projectStatus.textContent = '';
+        } catch (error) { projectStatus.textContent = error.message; }
+    });
+    document.getElementById('closeProjectDialogBtn').addEventListener('click', () => {
+        if (!projectSwitchPending) projectDialog.close();
+    });
+    projectDialog.addEventListener('cancel', event => { if (projectSwitchPending) event.preventDefault(); });
+    async function switchProject(payload) {
+        if (projectSwitchPending) return;
+        if (annotationSavePending || annotationDirectoryChangePending) {
+            projectStatus.textContent = 'Wait for the current save or folder change to finish.';
+            return;
+        }
+        if (!confirmDiscardUnsavedChanges('Switching projects clears the image queue.')) return;
+        projectSwitchPending = true;
+        projectStatus.textContent = 'Saving classes and opening project…';
+        try {
+            if (classSaveTimer) { clearTimeout(classSaveTimer); classSaveTimer = null; }
+            if (!await saveProjectClasses()) throw new Error('Classes could not be saved; project switch cancelled.');
+            await projectRequest(payload);
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            window.location.reload();
+        } catch (error) {
+            projectStatus.textContent = error.message;
+            projectSwitchPending = false;
+        }
+    }
+    document.getElementById('createProjectBtn').addEventListener('click', () => {
+        const name = document.getElementById('newProjectName').value.trim();
+        if (!name) { projectStatus.textContent = 'Enter a project name.'; return; }
+        switchProject({ action: 'new', name, reuse_classes: document.getElementById('reuseProjectClasses').checked });
+    });
+    document.getElementById('openProjectBtn').addEventListener('click', () => {
+        if (projectSelect.value) switchProject({ action: 'open', project_id: projectSelect.value });
+    });
+
+    const overlayVisibility = { candidates: true, annotations: true, labels: true, imageOnly: false };
+    const visibilityInputs = {
+        candidates: document.getElementById('showCandidatesInput'),
+        annotations: document.getElementById('showAnnotationsInput'),
+        labels: document.getElementById('showLabelsInput'),
+        imageOnly: document.getElementById('imageOnlyInput')
+    };
+    Object.entries(visibilityInputs).forEach(([key, input]) => {
+        input.addEventListener('change', () => {
+            overlayVisibility[key] = input.checked;
+            if (overlayVisibility.imageOnly || !overlayVisibility.candidates) appState.selectedCandidateIds.clear();
+            if (overlayVisibility.imageOnly || !overlayVisibility.annotations) appState.selectedAnnotationIds.clear();
+            if (overlayVisibility.imageOnly && appState.isManualMode) toggleManualMode();
+            updateAnnotationLog();
+            draw();
+        });
+    });
+
+    const imageQueueSearch = document.getElementById('imageQueueSearch');
+    const classListSearch = document.getElementById('classListSearch');
+    imageQueueSearch.addEventListener('input', renderImageBrowser);
+    classListSearch.addEventListener('input', filterClassList);
+    function filterClassList() {
+        const query = classListSearch.value.trim().toLocaleLowerCase();
+        const rows = Array.from(classManager.querySelectorAll('.class-row'));
+        rows.forEach(row => {
+            row.hidden = !row.querySelector('.class-select-btn').dataset.className.toLocaleLowerCase().includes(query);
+        });
+        document.getElementById('classSearchEmpty').hidden = !query || rows.some(row => !row.hidden);
+    }
 
     // --- EVENT LISTENERS ---
     loadImageInput.addEventListener('change', handleImageLoad);
@@ -332,6 +426,10 @@ document.addEventListener('DOMContentLoaded', () => {
     resetPreprocessSettingsBtn.addEventListener('click', handleResetPreprocessSettings);
     manualAnnotationBtn.addEventListener('click', toggleManualMode);
     addClassBtn.addEventListener('click', handleAddClass);
+    classificationSelect.addEventListener('change', () => {
+        updateButtonStates();
+        draw();
+    });
     quickAddClassBtn.addEventListener('click', () => handleQuickAddClass());
     quickClassInput.addEventListener('keydown', event => {
         if (event.key !== 'Enter') return;
@@ -419,6 +517,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (resizeCanvasToContainer()) {
             draw();
         }
+    });
+    window.addEventListener('workspace-panels-changed', () => {
+        resizeCanvasToContainer();
+        fitImageToView();
+        draw();
     });
     window.addEventListener('beforeunload', handleBeforeUnload);
 
@@ -568,6 +671,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderImageBrowser() {
         stateStore.invalidateReviewsForClassChanges(appState);
+        const focusedIndex = document.activeElement?.closest('.image-list-item')?.dataset.imageIndex;
         imageList.innerHTML = '';
 
         if (appState.images.length === 0) {
@@ -593,6 +697,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const activeFilter = imageController.normalizeQueueFilter(appState.imageQueueFilter);
         const visibleQueueItems = queueItems.filter(item => (
             imageController.imageMatchesQueueFilter(item.queueState, activeFilter)
+            && publicImageName(item.imageRecord).toLocaleLowerCase().includes(imageQueueSearch.value.trim().toLocaleLowerCase())
         ));
 
         if (visibleQueueItems.length === 0) {
@@ -611,9 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
             item.dataset.imageIndex = String(index);
             if (index === currentIndex) item.classList.add('active');
             if (appState.dirtyImages.has(imageRecord.id)) item.classList.add('dirty-image');
-            const match = appState.annotationMatchesByImage.get(imageRecord.id);
-            if (match?.status === 'missing') item.classList.add('match-missing');
-            if (match?.status === 'ambiguous') item.classList.add('match-ambiguous');
+            item.setAttribute('aria-current', String(index === currentIndex));
             item.title = publicImagePath(imageRecord);
 
             const name = document.createElement('span');
@@ -623,6 +726,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const badges = document.createElement('span');
             badges.className = 'image-list-badges';
             getImageBadges(imageRecord).forEach(badgeInfo => {
+                if (!['unreviewed', 'in_progress', 'reviewed', 'confirmed_empty', 'dirty'].includes(badgeInfo.type)) {
+                    item.title += `
+${badgeInfo.title}`;
+                    return;
+                }
                 const badge = document.createElement('span');
                 badge.className = `image-badge ${badgeInfo.type}`;
                 badge.textContent = badgeInfo.label;
@@ -634,11 +742,15 @@ document.addEventListener('DOMContentLoaded', () => {
             item.appendChild(badges);
             imageList.appendChild(item);
         });
+        if (focusedIndex !== undefined) {
+            imageList.querySelector(`[data-image-index="${Number(focusedIndex)}"]`)?.focus({ preventScroll: true });
+        }
         updateCurrentImageDisplay();
     }
 
     function updateImageQueueProgress(summary) {
-        imageQueueProgress.textContent = `Reviewed: ${summary.reviewed || 0} / ${summary.total} (${summary.confirmedEmpty || 0} empty) | With annotations: ${summary.annotated} | Unsaved: ${summary.unsaved}`;
+        imageQueueProgress.textContent = `${summary.reviewed || 0} of ${summary.total} reviewed`;
+        imageQueueProgress.title = `${summary.confirmedEmpty || 0} confirmed empty · ${summary.unsaved || 0} unsaved`;
     }
 
     function renderImageQueueFilters() {
@@ -1151,11 +1263,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CLASS MANAGEMENT ---
     function handleAddClass() {
-        createClassFromName(getUniqueClassName(appState.classes), { select: true });
+        quickClassInput.closest('.quick-class-row').hidden = false;
+        quickClassInput.focus();
+        quickClassInput.scrollIntoView({ block: 'nearest' });
+        updateStatus('Enter a meaningful class name, then choose Create class.');
     }
 
     function handleQuickAddClass() {
-        return createClassFromName(quickClassInput.value, { select: true });
+        const created = createClassFromName(quickClassInput.value, { select: true });
+        if (created) quickClassInput.closest('.quick-class-row').hidden = true;
+        return created;
     }
 
     function createClassFromName(rawName, { select = true } = {}) {
@@ -1183,7 +1300,9 @@ document.addEventListener('DOMContentLoaded', () => {
         appState.classes.push(newClass);
         appState.nextClassId = Math.max(appState.nextClassId, newClass.id + 1);
         scheduleProjectClassesSave();
+        classListSearch.value = '';
         renderClassControls(select ? newClass.name : classificationSelect.value);
+        classManager.scrollTop = classManager.scrollHeight;
         quickClassInput.value = '';
 
         const msg = `Added class "${newClass.name}".`;
@@ -1230,6 +1349,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleClassManagerClick(event) {
+        const selectButton = event.target.closest('.class-select-btn');
+        if (selectButton) {
+            classificationSelect.value = selectButton.dataset.className;
+            classificationSelect.dispatchEvent(new Event('change'));
+            updateButtonStates();
+            draw();
+            return;
+        }
         const deleteButton = event.target.closest('.class-delete-btn');
         if (!deleteButton) return;
 
@@ -1293,6 +1420,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!classInfo) return;
 
         const hotkey = normalizeHotkey(rawHotkey);
+        if (classManagerLogic.isReservedHotkey(hotkey)) {
+            const msg = `${hotkey.toUpperCase()} is reserved for ${hotkey === 'b' ? 'Manual Box' : 'Undo'}. Choose another shortcut or clear the field.`;
+            showClassManagerFeedback(msg);
+            showToast(msg, 'info');
+            renderClassControls(classificationSelect.value);
+            return;
+        }
+
         if (hotkey && appState.classes.some((cls, clsIndex) => clsIndex !== index && cls.hotkey === hotkey)) {
             const msg = `Hotkey ${hotkey.toUpperCase()} is already assigned.`;
             showClassManagerFeedback(msg);
@@ -1310,58 +1445,32 @@ document.addEventListener('DOMContentLoaded', () => {
     function deleteClass(index) {
         const classToDelete = appState.classes[index];
         if (!classToDelete) return;
-
-        const affectedCount = countCurrentImageAnnotationsWithClass(classToDelete.name);
-
+        const affectedCount = countAnnotationsWithClass(classToDelete.name);
         if (affectedCount > 0) {
-            const confirmed = window.confirm(
-                `Delete class "${classToDelete.name}" and remove ${affectedCount} annotation${affectedCount === 1 ? '' : 's'} from the current image? Other loaded images will not be changed.`
-            );
-            if (!confirmed) return;
+            const msg = `"${classToDelete.name}" is used by ${affectedCount} loaded annotations. Reassign them before removing the class.`;
+            showClassManagerFeedback(msg);
+            showToast(msg, 'info');
+            return;
         }
-
-        const keepClassForOtherImages = countOtherImageAnnotationsWithClass(classToDelete.name) > 0;
-
-        const historyStart = currentHistory().length;
-        const deletedCount = deleteCurrentImageAnnotationsWithClass(classToDelete.name);
-
-        if (!keepClassForOtherImages) {
-            appState.classes.splice(index, 1);
-            annotationController.recordHistoryCommand(currentHistory(), currentRedoHistory(), {
-                type: 'remove_class',
-                classRecord: { item: classToDelete, index }
-            });
-            scheduleProjectClassesSave();
-        }
-
-        annotationController.groupHistoryCommands(currentHistory(), historyStart, 'class deletion');
-
-        const preferredClass = !keepClassForOtherImages && classificationSelect.value === classToDelete.name
-            ? ''
-            : classificationSelect.value;
-        renderClassControls(preferredClass);
-        updateAnnotationLog();
-        updateAnnotationInspector();
-        renderImageBrowser();
+        if (!window.confirm(`Remove "${classToDelete.name}" from the project class list? Saved annotation files are unchanged. Loading a file that uses this class will restore it.`)) return;
+        appState.classes.splice(index, 1);
+        clearAllAnnotationHistory();
+        clearClassManagerFeedback();
+        scheduleProjectClassesSave();
+        renderClassControls(classificationSelect.value);
         draw();
-
-        let msg;
-        if (deletedCount > 0 && keepClassForOtherImages) {
-            msg = `Removed ${deletedCount} current-image "${classToDelete.name}" annotations. Class kept because it is used on other loaded images.`;
-        } else if (deletedCount > 0) {
-            msg = `Deleted "${classToDelete.name}" and ${deletedCount} current-image annotations.`;
-        } else if (keepClassForOtherImages) {
-            msg = `Class "${classToDelete.name}" is used on other loaded images, so it was kept.`;
-        } else {
-            msg = `Deleted class "${classToDelete.name}".`;
-        }
+        updateButtonStates();
+        const msg = `Removed class "${classToDelete.name}". Annotations were preserved.`;
         updateStatus(msg);
         showToast(msg, 'info');
-        updateButtonStates();
     }
 
     // --- CANVAS INTERACTION ---
     function toggleManualMode() {
+        if (!appState.isManualMode) {
+            overlayVisibility.imageOnly = false;
+            overlayVisibility.annotations = true;
+        }
         const nextManualMode = canvasInteractionController.toggleManualMode(appState);
         manualAnnotationBtn.classList.toggle('active', nextManualMode.enabled);
         canvas.style.cursor = nextManualMode.cursor;
@@ -1605,6 +1714,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     function getSelectedResizeHandleAtPoint(worldPoint) {
+        if (overlayVisibility.imageOnly || !overlayVisibility.annotations) return null;
         for (let i = currentAnnotations().length - 1; i >= 0; i--) {
             const annotation = currentAnnotations()[i];
             if (!appState.selectedAnnotationIds.has(annotation.id)) continue;
@@ -1624,6 +1734,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function findAnnotationAtPoint(worldPoint, predicate = null) {
+        if (overlayVisibility.imageOnly || !overlayVisibility.annotations) return null;
         for (let i = currentAnnotations().length - 1; i >= 0; i--) {
             const annotation = currentAnnotations()[i];
             if (predicate && !predicate(annotation)) continue;
@@ -1633,6 +1744,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function findCandidateAtPoint(worldPoint) {
+        if (overlayVisibility.imageOnly || !overlayVisibility.candidates) return null;
         for (let i = currentCandidates().length - 1; i >= 0; i--) {
             const candidate = currentCandidates()[i];
             if (pointInsideCandidate(worldPoint, candidate)) return candidate;
@@ -1731,6 +1843,8 @@ document.addEventListener('DOMContentLoaded', () => {
             appState.classes,
             NEW_CLASS_ACTION
         );
+        // The refined UI uses native controls rather than canvas-drawn buttons.
+        appState.choiceInfo.buttons = [];
     }
 
     function promptCreateClassForManualAnnotation() {
@@ -1773,9 +1887,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             markCurrentImageDirty();
 
-            const msg = `Added manual annotation #${newAnnotation.id} as '${className}'.`;
-            updateStatus(msg);
-            showToast(msg, 'success');
             updateAnnotationLog();
             renderImageBrowser();
         } catch (error) {
@@ -1834,6 +1945,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleKeyDown(event) {
+        // Native dialog handles focus, text editing, and Escape. Workspace
+        // shortcuts must not reach the annotations behind it.
+        if (projectDialog.open) return;
         const modal = modalKeyboardController.visibleModal([samSettingsModal, preprocessSettingsModal, helpModal]);
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -1867,14 +1981,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const tagName = document.activeElement ? document.activeElement.tagName : '';
         if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tagName)) return;
 
-        const classMatch = appState.classes.find(cls => cls.hotkey === event.key.toLowerCase());
+        const plainKey = !event.ctrlKey && !event.metaKey && !event.altKey;
+        const classMatch = plainKey && !classManagerLogic.isReservedHotkey(event.key)
+            && appState.classes.find(cls => cls.hotkey === event.key.toLowerCase());
         if (appState.isAwaitingChoice && appState.choiceInfo && classMatch) {
             event.preventDefault();
             finalizeAnnotation(classMatch.name);
             return;
         }
 
-        if (event.key.toLowerCase() === 'b') {
+        if (plainKey && event.key.toLowerCase() === 'b') {
             event.preventDefault();
             if (appState.currentImage) toggleManualMode();
             return;
@@ -1903,7 +2019,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const undoShortcut = event.key.toLowerCase() === 'u'
+        const undoShortcut = (plainKey && event.key.toLowerCase() === 'u')
             || (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z');
         const redoShortcut = event.ctrlKey
             && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'));
@@ -2434,7 +2550,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const sourceImageName = appState.currentImage ? publicImageName(appState.currentImage) : 'unknown_image';
-            const format = currentAnnotationFormat();
+            const format = document.getElementById('exportFormatSelect').value;
             const exportData = annotationWorkflowController.buildAnnotationExport(
                 sourceImageName,
                 annotations,
@@ -2836,14 +2952,16 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadProjectSettings() {
         try {
             const response = await apiWorkflows.loadProjectSettings();
-            if (!response.ok) return;
+            if (!response.ok) return false;
 
             const data = await response.json();
             if (data.error) throw new Error(data.error);
             applyProjectSettings(data);
+            return true;
         } catch (error) {
             console.warn('Project settings could not be loaded.', error);
         }
+        return false;
     }
 
     function currentAnnotationFormat() {
@@ -2865,7 +2983,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .join(',');
         annotationSourceFilesInput.accept = loadAnnotationFileInput.accept;
         annotationSourceFolderInput.accept = loadAnnotationFileInput.accept;
-        exportAnnotationFileBtn.textContent = `Export current annotations as ${metadata.label}`;
+        exportAnnotationFileBtn.textContent = 'Export current image';
         loadAnnotationFileBtn.textContent = `Import current-image ${metadata.label}`;
         loadServerAnnotationsBtn.textContent = `Load saved current-image ${metadata.label}`;
     }
@@ -2961,19 +3079,23 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadProjectClasses() {
         try {
             const response = await apiWorkflows.loadClasses();
-            if (!response.ok) return;
+            if (!response.ok) return false;
 
             const data = await response.json();
             if (Array.isArray(data.classes)) {
                 appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 applyLoadedClasses(data.classes);
+                return true;
             }
         } catch (error) {
             console.warn('Project classes could not be loaded.', error);
         }
+        return false;
     }
 
     function scheduleProjectClassesSave() {
+        classChangesPending = true;
+        updateButtonStates();
         if (classSaveTimer) clearTimeout(classSaveTimer);
         classSaveTimer = setTimeout(() => {
             classSaveTimer = null;
@@ -2981,14 +3103,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 500);
     }
 
-    async function saveProjectClasses({ silent = false } = {}) {
+    function saveProjectClasses(options = {}) {
+        classSaveQueue = classSaveQueue.then(() => persistProjectClasses(options));
+        return classSaveQueue;
+    }
+
+    async function persistProjectClasses({ silent = false } = {}) {
+        const snapshot = JSON.stringify(appState.classes);
         try {
-            const response = await apiWorkflows.saveClasses(appState.classes);
+            const response = await apiWorkflows.saveClasses(JSON.parse(snapshot));
             if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
 
             const data = await response.json();
             if (data.error) throw new Error(data.error);
-            if (Array.isArray(data.classes)) {
+            if (Array.isArray(data.classes) && JSON.stringify(appState.classes) === snapshot) {
+                classChangesPending = false;
                 appState.classes = normalizeClassList(data.classes);
                 appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 renderClassControls(classificationSelect.value);
@@ -3000,6 +3129,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return true;
         } catch (error) {
+            classChangesPending = true;
+            showClassManagerFeedback(`Classes could not be saved: ${error.message}. Keep this page open; edit a class to retry.`);
             console.warn('Project classes could not be saved.', error);
             if (!silent) {
                 const msg = `Failed to save project classes: ${error.message}`;
@@ -3007,6 +3138,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 showToast(msg, 'error');
             }
             return false;
+        } finally {
+            updateButtonStates();
         }
     }
 
@@ -3051,7 +3184,10 @@ document.addEventListener('DOMContentLoaded', () => {
             appState.nextClassId,
             normalizedClasses.reduce((maximum, classInfo) => Math.max(maximum, classInfo.id || 0), 0) + 1
         );
-        const addedClassCount = ensureClassesForAnnotations(currentAnnotations());
+        let addedClassCount = 0;
+        for (const annotations of appState.annotationsByImage.values()) {
+            addedClassCount += ensureClassesForAnnotations(annotations);
+        }
         if (addedClassCount > 0) scheduleProjectClassesSave();
         renderClassControls(classificationSelect.value);
         draw();
@@ -3075,23 +3211,80 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- RENDERING ---
+    function updateWorkingState() {
+        const image = appState.currentImage;
+        let tool = 'Select / pan';
+        if (!image) tool = 'Load an image';
+        else if (appState.isAwaitingChoice) tool = 'Choose a class for the new box';
+        else if (appState.boxEditMode) tool = appState.boxEditMode === 'resize' ? 'Resize box' : 'Move boxes';
+        else if (appState.isDrawing) tool = 'Drawing box';
+        else if (overlayVisibility.imageOnly) tool = 'Inspect image · pan / zoom';
+        else if (appState.isManualMode) tool = 'Manual box · drag to draw';
+        else if (oneClickAcceptInput.checked && overlayVisibility.candidates) tool = 'One-click accept';
+        const activeClass = appState.classes.find(cls => cls.name === classificationSelect.value);
+        const dirty = Boolean(image && appState.dirtyImages.has(image.id));
+        const review = image ? imageController.reviewStatusLabel(dirty ? 'in_progress' : (image.reviewStatus || 'unreviewed')) : 'No image';
+        const candidates = appState.selectedCandidateIds.size;
+        const annotations = appState.selectedAnnotationIds.size;
+        const values = {
+            workingTool: `Tool: ${tool}`,
+            workingClass: `Class: ${activeClass?.name || 'None selected'}`,
+            workingReview: `Review: ${review}`,
+            workingSelection: candidates || annotations
+                ? `Selected: ${candidates} candidate${candidates === 1 ? '' : 's'} · ${annotations} annotation${annotations === 1 ? '' : 's'}` : 'No selection'
+        };
+        Object.entries(values).forEach(([id, text]) => {
+            const element = document.getElementById(id);
+            // Avoid repeated live-region announcements during mouse movement.
+            if (element.textContent !== text) element.textContent = text;
+        });
+        document.getElementById('workingClass').style.borderLeftColor = activeClass?.color || 'transparent';
+        document.getElementById('workingReview').dataset.complete = String(Boolean(image
+            && !dirty && ['reviewed', 'confirmed_empty'].includes(image.reviewStatus)));
+        manualAnnotationBtn.setAttribute('aria-pressed', String(appState.isManualMode));
+    }
+
     function draw() {
+        updateWorkingState();
+        const busy = appState.isDrawing || appState.isAwaitingChoice || Boolean(appState.boxEditMode);
+        Object.entries(visibilityInputs).forEach(([key, input]) => {
+            input.checked = overlayVisibility[key];
+            input.disabled = busy || (key !== 'imageOnly' && overlayVisibility.imageOnly)
+                || (key === 'labels' && !overlayVisibility.annotations);
+        });
+        document.getElementById('canvasVisibilitySummary').textContent = overlayVisibility.imageOnly
+            ? 'Image only' : (!overlayVisibility.candidates || !overlayVisibility.annotations || !overlayVisibility.labels)
+                ? 'Overlays hidden' : 'View overlays';
         resizeCanvasToContainer();
+
+        window.SAM2ManualClassPicker.sync({
+            container: canvasContainer,
+            choice: appState.isAwaitingChoice ? appState.choiceInfo : null,
+            classes: appState.classes,
+            activeClass: classificationSelect.value,
+            onSelect: finalizeAnnotation,
+            onCreate: name => {
+                const created = createClassFromName(name, { select: true });
+                if (created) finalizeAnnotation(created);
+            },
+            onCancel: cancelManualAnnotation
+        });
 
         canvasRenderer.drawScene(ctx, canvas, {
             imageToDraw: currentDisplayImage(),
             cameraOffset: appState.cameraOffset,
             cameraZoom: appState.cameraZoom,
-            candidates: currentCandidates(),
+            candidates: overlayVisibility.candidates && !overlayVisibility.imageOnly ? currentCandidates() : [],
             selectedCandidateIds: appState.selectedCandidateIds,
-            annotations: currentAnnotations(),
+            annotations: overlayVisibility.annotations && !overlayVisibility.imageOnly ? currentAnnotations() : [],
             selectedAnnotationIds: appState.selectedAnnotationIds,
             isDrawing: appState.isDrawing,
             currentManualBox: appState.currentManualBox,
             isAwaitingChoice: appState.isAwaitingChoice,
             choiceInfo: appState.choiceInfo,
             zoomLevelDisplay,
-            getClassColor
+            getClassColor,
+            showLabels: overlayVisibility.labels
         });
     }
 
@@ -3182,6 +3375,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderClassControls(preferredClassName = classificationSelect.value) {
+        const count = appState.classes.length;
+        const summary = document.getElementById('classSourceSummary');
+        const guidance = count
+            ? `${count} ${count === 1 ? 'class' : 'classes'} in this project. Select a class to annotate, or use Edit to change it.`
+            : 'Start by creating your first class, or import labeled annotations.';
+        if (summary.textContent !== guidance) summary.textContent = guidance;
+        summary.hidden = count > 0;
+        addClassBtn.textContent = appState.classes.length ? 'Create class' : 'Create first class';
         stateStore.invalidateReviewsForClassChanges(appState);
         renderImageBrowser();
         updateButtonStates();
@@ -3190,6 +3391,8 @@ document.addEventListener('DOMContentLoaded', () => {
             appState.classes,
             preferredClassName
         );
+        filterClassList();
+        updateWorkingState();
     }
 
     function showClassManagerFeedback(message) {
@@ -3262,6 +3465,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 dirtyImageCount: appState.dirtyImages.size,
                 reviewStatus: appState.currentImage?.reviewStatus || 'unreviewed',
                 savingAnnotations: annotationSavePending || annotationDirectoryChangePending,
+                classChangesPending,
                 currentImageDirty: appState.currentImage ? appState.dirtyImages.has(appState.currentImage.id) : false,
                 imageCount: appState.images.length,
                 matchSummary: appState.matchSummary,
@@ -3275,6 +3479,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 preprocessLabel
             }
         );
+        updateWorkingState();
     }
 
     function ensureClassesForAnnotations(annotations) {
@@ -3292,21 +3497,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return annotationController.countAnnotationsWithClass(appState.annotationsByImage, className);
     }
 
-    function countCurrentImageAnnotationsWithClass(className) {
-        return annotationController.countAnnotationsWithClass(
-            new Map([[currentImageId(), currentAnnotations()]]),
-            className
-        );
-    }
-
-    function countOtherImageAnnotationsWithClass(className) {
-        return annotationController.countOtherImageAnnotationsWithClass(
-            appState.annotationsByImage,
-            currentImageId(),
-            className
-        );
-    }
-
     function renameAnnotationClass(oldName, newName) {
         return annotationController.renameAnnotationClass(
             appState.annotationsByImage,
@@ -3314,26 +3504,6 @@ document.addEventListener('DOMContentLoaded', () => {
             oldName,
             newName
         );
-    }
-
-    function deleteCurrentImageAnnotationsWithClass(className) {
-        const idsToDelete = currentAnnotations()
-            .filter(annotation => annotation.class === className)
-            .map(annotation => annotation.id);
-        const deletedAnnotations = annotationController.deleteAnnotationsByIds(
-            currentAnnotations(),
-            currentCandidates(),
-            currentHistory(),
-            currentRedoHistory(),
-            appState.selectedAnnotationIds,
-            idsToDelete
-        );
-
-        if (deletedAnnotations.length > 0) markCurrentImageDirty();
-
-        appState.selectedAnnotationIds.clear();
-        appState.logItemToModify = null;
-        return deletedAnnotations.length;
     }
 
     // --- STATE HELPERS ---
@@ -3432,6 +3602,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function resetState() {
+        imageQueueSearch.value = '';
         stateStore.resetProjectState(appState);
         setLoader(false);
 
@@ -3483,7 +3654,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleBeforeUnload(event) {
-        if (unsavedImageCount() === 0) return;
+        if (unsavedImageCount() === 0 && !classChangesPending) return;
         event.preventDefault();
         event.returnValue = '';
     }
@@ -3579,11 +3750,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateStatus(message) {
-        statusText.textContent = message;
+        if (statusText.textContent !== message) statusText.textContent = message;
     }
 
     function showToast(message, type = 'info', duration = 3000) {
-        if (!toastContainer) return;
+        if (type === 'success' || !toastContainer) return;
 
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
@@ -3597,15 +3768,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function initializeApp() {
-        renderSamSettingsPanel();
-        syncPreprocessSettingsInputs();
-        resetState();
-        renderClassControls();
-        await loadProjectSettings();
-        await loadProjectClasses();
-        resizeCanvasToContainer();
-        draw();
-        updateButtonStates();
+        const workspace = document.querySelector('.app-container');
+        workspace.inert = true;
+        try {
+            const response = await window.SAM2ApiClient.apiFetch('api/project/manifest');
+            if (!response.ok) throw new Error('Could not load the project');
+            const project = await response.json();
+            window.SAM2ApiClient.setProjectId(project.project_id);
+            document.getElementById('activeProjectName').textContent = project.name;
+
+            renderSamSettingsPanel();
+            syncPreprocessSettingsInputs();
+            resetState();
+            renderClassControls();
+            if (!await loadProjectSettings() || !await loadProjectClasses()) {
+                throw new Error('Could not load project settings or classes');
+            }
+            document.getElementById('manageProjectsBtn').disabled = false;
+            resizeCanvasToContainer();
+            draw();
+            updateButtonStates();
+            workspace.inert = false;
+        } catch (error) {
+            updateStatus(`${error.message}. Reload the page to retry; editing is disabled to protect saved work.`);
+        }
     }
 
     initializeApp();

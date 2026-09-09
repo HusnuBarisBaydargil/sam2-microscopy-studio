@@ -94,3 +94,16 @@ def test_manifest_uses_valid_backup_and_rejects_future_schema(tmp_path):
     (tmp_path / "project_manifest.json.bak").unlink(missing_ok=True)
     with pytest.raises(ValueError, match="schema_version"):
         load_or_create_project_manifest(path, **options)
+
+
+def test_new_project_has_no_sample_classes_and_saved_empty_list_stays_empty(tmp_path):
+    path = tmp_path / "project_manifest.json"
+    options = manifest_options(tmp_path)
+    manifest = load_or_create_project_manifest(path, **options)
+    assert manifest["classes"] == []
+    assert manifest["next_class_id"] == 1
+    reloaded = load_or_create_project_manifest(
+        path, legacy_classes=[{"name": "old label"}], **options,
+    )
+    assert reloaded["classes"] == []
+    assert reloaded["project_id"] == manifest["project_id"]

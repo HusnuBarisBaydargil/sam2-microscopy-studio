@@ -95,6 +95,12 @@ def test_image_controller_exports_expected_image_logic():
 
         const controller = context.window.SAM2ImageController;
         assert.ok(controller);
+        assert.strictEqual(controller.normalizeReviewStatus(undefined, 1), 'in_progress');
+        assert.strictEqual(controller.normalizeReviewStatus(undefined, 0), 'unreviewed');
+        assert.strictEqual(controller.normalizeReviewStatus('reviewed', 0), 'unreviewed');
+        assert.strictEqual(controller.normalizeReviewStatus('reviewed', 1), 'reviewed');
+        assert.strictEqual(controller.normalizeReviewStatus('confirmed_empty', 1), 'in_progress');
+        assert.strictEqual(controller.normalizeReviewStatus('confirmed_empty', 0), 'confirmed_empty');
 
         const file = {
             name: 'cells.TIF',
@@ -120,6 +126,7 @@ def test_image_controller_exports_expected_image_logic():
             preprocessParams: null,
             claheApplied: false,
             samHasRun: false,
+            reviewStatus: 'unreviewed',
             serverAnnotationsChecked: false
         });
 
@@ -157,6 +164,7 @@ def test_image_controller_exports_expected_image_logic():
             };
             const badges = controller.getImageBadges(preprocessedRecord, context);
             assert.deepStrictEqual(plain(badges), [
+                { type: 'unreviewed', label: 'Unreviewed', title: 'Review status: Unreviewed' },
                 { type: 'annotated', label: 'Ann 2', title: '2 annotations' },
                 { type: 'dirty', label: 'Unsaved', title: 'Unsaved changes' },
                 {
@@ -174,14 +182,14 @@ def test_image_controller_exports_expected_image_logic():
 
             assert.strictEqual(
                 controller.imageStateSummary(preprocessedRecord, context),
-                '2 annotations, 0 SAM candidates, unsaved changes, CLAHE preprocessing active, CSV matched'
+                'Unreviewed, 2 annotations, 0 SAM candidates, unsaved changes, CLAHE preprocessing active, CSV matched'
             );
             assert.strictEqual(
                 controller.imageStateSummary(
                     preprocessedRecord,
                     { ...context, match: { status: 'missing' }, isDirty: false }
                 ),
-                '2 annotations, 0 SAM candidates, CLAHE preprocessing active, No saved CSV'
+                'Unreviewed, 2 annotations, 0 SAM candidates, CLAHE preprocessing active, No saved CSV'
             );
             assert.deepStrictEqual(
                 plain(controller.getImageBadges(preprocessedRecord, { ...context, match: { status: 'missing' } }).slice(-1)[0]),
@@ -215,6 +223,9 @@ def test_image_controller_exports_expected_image_logic():
                 match: { status: 'matched' }
             });
             assert.deepStrictEqual(plain(annotatedDirtyState), {
+                reviewStatus: 'unreviewed',
+                reviewed: false,
+                confirmedEmpty: false,
                 annotated: true,
                 hasCandidates: true,
                 unsaved: true,
@@ -230,8 +241,24 @@ def test_image_controller_exports_expected_image_logic():
             assert.strictEqual(controller.imageMatchesQueueFilter(emptyState, 'unannotated'), true);
             assert.deepStrictEqual(
                 plain(controller.imageQueueProgressSummary([annotatedDirtyState, emptyState])),
-                { total: 2, annotated: 1, unsaved: 1, candidates: 1 }
+                { total: 2, annotated: 1, reviewed: 0, confirmedEmpty: 0, unsaved: 1, candidates: 1 }
             );
+
+            const reviewedState = controller.imageQueueState({ annotations: [{ id: 1 }], reviewStatus: 'reviewed' });
+            const confirmedEmptyState = controller.imageQueueState({ reviewStatus: 'confirmed_empty' });
+            assert.strictEqual(controller.imageMatchesQueueFilter(annotatedDirtyState, 'needs_review'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(reviewedState, 'needs_review'), false);
+            assert.strictEqual(controller.imageMatchesQueueFilter(reviewedState, 'reviewed'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(confirmedEmptyState, 'reviewed'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(confirmedEmptyState, 'confirmed_empty'), true);
+            assert.strictEqual(controller.imageMatchesQueueFilter(reviewedState, 'confirmed_empty'), false);
+            assert.deepStrictEqual(
+                plain(controller.imageQueueProgressSummary([reviewedState, confirmedEmptyState, annotatedDirtyState])),
+                { total: 3, annotated: 2, reviewed: 2, confirmedEmpty: 1, unsaved: 1, candidates: 1 }
+            );
+            assert.strictEqual(controller.getImageBadges(
+                { ...preprocessedRecord, reviewStatus: 'confirmed_empty' }, context
+            )[0].label, 'Confirmed empty');
 
             assert.deepStrictEqual(
                 plain(controller.imagePayloads([
@@ -239,8 +266,8 @@ def test_image_controller_exports_expected_image_logic():
                     { id: 'b', name: 'b.tif', displayPath: 'folder/b.tif' }
                 ])),
                 [
-                    { id: 'a', name: 'a.tif', display_path: 'folder/a.tif', width: 10, height: 20 },
-                    { id: 'b', name: 'b.tif', display_path: 'folder/b.tif', width: null, height: null }
+                    { id: 'a', image_identity: 'a', name: 'a.tif', display_path: 'folder/a.tif', width: 10, height: 20 },
+                    { id: 'b', image_identity: 'b', name: 'b.tif', display_path: 'folder/b.tif', width: null, height: null }
                 ]
             );
         }

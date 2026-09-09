@@ -99,7 +99,9 @@ def test_frontend_config_exports_expected_values():
         assert.strictEqual(config.ANNOTATION_FORMATS.coco.mime, 'application/json');
         assert.strictEqual(config.CLASS_COLOR_PALETTE[0], '#39d353');
         assert.ok(config.ALLOWED_IMAGE_EXTENSIONS.includes('.tiff'));
-        assert.ok(config.ALLOWED_IMAGE_MIME_TYPES.has('image/x-tiff'));
+        assert.ok(config.ALLOWED_IMAGE_EXTENSIONS.includes('.bmp'));
+        assert.ok(config.ALLOWED_IMAGE_EXTENSIONS.includes('.webp'));
+        assert.ok(config.ALLOWED_IMAGE_EXTENSIONS.includes('.jp2'));
         assert.strictEqual(config.OVERLAY_COLORS.manualBox, '#d97706');
         assert.strictEqual(config.MAX_ZOOM, 10);
         assert.strictEqual(config.MIN_ZOOM, 0.1);

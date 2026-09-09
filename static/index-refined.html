@@ -3,52 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SAM2 Web Annotation Tool</title>
-    <link rel="stylesheet" href="static/style.css">
+    <title>SAM2 Microscopy Studio</title>
+    <link rel="stylesheet" href="static/style-refined.css">
 </head>
 <body>
     <div class="app-container">
         <header class="top-bar">
             <div class="top-brand">
-                <h1>SAM2 Annotator</h1>
-                <span>Bounding-box workflow</span>
+                <h1>Microscopy Studio</h1>
             </div>
             <div class="top-action-group top-load-actions">
                 <span class="top-action-label">Load</span>
                 <div class="top-action-controls">
-                    <label for="loadImageInput" class="btn btn-primary">Load Image</label>
+                    <label for="loadImageInput" class="btn btn-primary" role="button" tabindex="0">Load Image</label>
                     <input type="file" id="loadImageInput" accept=".apng,.bmp,.bw,.dib,.gif,.icb,.ico,.j2c,.j2k,.jfif,.jp2,.jpc,.jpe,.jpeg,.jpf,.jpg,.jpx,.pbm,.pcx,.pgm,.png,.pnm,.ppm,.qoi,.rgb,.rgba,.sgi,.tga,.tif,.tiff,.vda,.vst,.webp,.xbm" hidden>
-                    <label for="openFolderInput" class="btn btn-secondary">Open Folder</label>
+                    <label for="openFolderInput" class="btn btn-secondary" role="button" tabindex="0">Open Folder</label>
                     <input type="file" id="openFolderInput" accept=".apng,.bmp,.bw,.dib,.gif,.icb,.ico,.j2c,.j2k,.jfif,.jp2,.jpc,.jpe,.jpeg,.jpf,.jpg,.jpx,.pbm,.pcx,.pgm,.png,.pnm,.ppm,.qoi,.rgb,.rgba,.sgi,.tga,.tif,.tiff,.vda,.vst,.webp,.xbm" webkitdirectory directory multiple hidden>
                 </div>
             </div>
-            <div class="top-action-group top-annotate-actions">
-                <span class="top-action-label">Annotate</span>
+            <details id="projectExportMenu" class="top-action-group top-save-actions">
+                <summary class="btn btn-secondary" aria-controls="projectExportPanel">Project &amp; export</summary>
+                <div id="projectExportPanel" class="project-export-popup" role="region" aria-label="Project and export actions">
+                <button id="manageProjectsBtn" type="button" disabled class="btn btn-secondary">New / Open project</button>
                 <div class="top-action-controls">
-                    <button id="runSamBtn" class="btn btn-primary" disabled>Generate SAM2 candidates</button>
-                    <button id="clearCandidatesBtn" class="btn btn-secondary" disabled>Clear SAM candidates only</button>
-                    <span class="action-helper-text">Clears candidates only; annotations stay unchanged.</span>
-                    <button id="manualAnnotationBtn" class="btn btn-primary manual-toggle-btn" disabled>Manual Box (B)</button>
-                </div>
-            </div>
-            <div class="top-action-group top-save-actions">
-                <span class="top-action-label">Save</span>
-                <div class="top-action-controls">
-                    <button id="saveServerBtn" class="btn btn-secondary" disabled>Save current annotations</button>
-                    <button id="saveAllServerBtn" class="btn btn-secondary" disabled>Save all unsaved annotations</button>
-                    <button id="exportAnnotationFileBtn" class="btn btn-primary" disabled>Export current annotations</button>
+
+                    <button id="saveAllServerBtn" class="btn btn-secondary" disabled>Save all</button>
+                    <label for="exportFormatSelect">Current-image export format</label>
+                    <select id="exportFormatSelect" class="form-control">
+                        <option value="yolo">YOLO TXT</option>
+                        <option value="coco">COCO JSON</option>
+                        <option value="csv_rich" selected>Rich CSV</option>
+                        <option value="csv">Simple CSV</option>
+                        <option value="voc">Pascal VOC XML</option>
+                    </select>
+                    <button id="exportAnnotationFileBtn" class="btn btn-secondary" disabled>Export current annotations</button>
                     <button id="validateProjectDatasetBtn" class="btn btn-secondary" disabled>Validate project</button>
-                    <button id="exportProjectDatasetBtn" class="btn btn-primary" disabled>Export project COCO</button>
-                    <span id="unsavedStateIndicator" class="unsaved-state-indicator saved">All changes saved</span>
-                    <button id="helpBtn" class="btn btn-secondary help-btn" title="Help & Shortcuts">?</button>
+                    <button id="exportProjectDatasetBtn" class="btn btn-secondary" disabled>Export whole project (COCO)</button>
+
+
                 </div>
-            </div>
+                </div>
+            </details>
+            <div class="workspace-help"><button id="helpBtn" class="btn btn-secondary help-btn" title="Help & Shortcuts">?</button></div>
             <div id="status-panel" class="status-panel" role="status" aria-live="polite">
-                <strong>Status:</strong> <span id="statusText">Please load an image.</span>
+                <span id="statusText"></span>
             </div>
         </header>
 
-        <aside class="side-panel project-panel">
+        <aside id="projectPanel" class="side-panel project-panel" aria-label="Images and SAM2 settings">
             <section class="card">
                 <h3>Image Queue</h3>
                 <div class="current-image-panel">
@@ -58,28 +60,21 @@
                     <span id="imagePosition" class="image-position">0 / 0</span>
                     <span id="currentImageState" class="image-state-summary">No image loaded.</span>
                 </div>
-                <div class="image-nav-controls">
-                    <button id="prevImageBtn" class="btn btn-secondary" disabled>Previous</button>
-                    <button id="nextImageBtn" class="btn btn-secondary" disabled>Next</button>
-                </div>
-                <div class="review-actions">
-                    <button id="reviewAndNextBtn" class="btn btn-primary" disabled>Save and mark reviewed &rarr; Next</button>
-                    <button id="confirmEmptyBtn" class="btn btn-secondary" disabled>Confirm empty &rarr; Next</button>
-                    <button id="reopenReviewBtn" class="btn btn-secondary" disabled>Reopen review</button>
-                    <span class="scope-helper-text">Review every target object before completing an image. Unaccepted SAM candidates are excluded.</span>
-                </div>
+
+
                 <div id="imageQueueProgress" class="image-queue-progress">Reviewed: 0 / 0 (0 empty) | With annotations: 0 | Unsaved: 0</div>
                 <div id="imageQueueFilters" class="image-queue-filters" role="group" aria-label="Image queue filters">
-                    <button type="button" class="queue-filter-btn active" data-filter="all">All</button>
-                    <button type="button" class="queue-filter-btn" data-filter="needs_review">Needs review</button>
-                    <button type="button" class="queue-filter-btn" data-filter="reviewed">Reviewed</button>
-                    <button type="button" class="queue-filter-btn" data-filter="confirmed_empty">Confirmed empty</button>
-                    <button type="button" class="queue-filter-btn" data-filter="unannotated">No annotations</button>
-                    <button type="button" class="queue-filter-btn" data-filter="has_candidates">Has candidates</button>
-                    <button type="button" class="queue-filter-btn" data-filter="annotated">With annotations</button>
-                    <button type="button" class="queue-filter-btn" data-filter="unsaved">Unsaved</button>
-                    <button type="button" class="queue-filter-btn" data-filter="missing_matched">Missing matched annotations</button>
+                    <div class="queue-main-filters"><button type="button" class="queue-filter-btn active" data-filter="all">All</button>
+<button type="button" class="queue-filter-btn" data-filter="needs_review">Needs review</button>
+<button type="button" class="queue-filter-btn" data-filter="reviewed">Completed</button></div>
+                    <details class="queue-more-filters"><summary>More filters</summary><div class="queue-secondary-filters"><button type="button" class="queue-filter-btn" data-filter="confirmed_empty">Confirmed empty</button>
+<button type="button" class="queue-filter-btn" data-filter="unannotated">No annotations</button>
+<button type="button" class="queue-filter-btn" data-filter="has_candidates">Has candidates</button>
+<button type="button" class="queue-filter-btn" data-filter="annotated">With annotations</button>
+<button type="button" class="queue-filter-btn" data-filter="unsaved">Unsaved</button>
+<button type="button" class="queue-filter-btn" data-filter="missing_matched">Missing matched annotations</button></div></details>
                 </div>
+                <input id="imageQueueSearch" type="search" class="form-control" placeholder="Find an image" aria-label="Search image filenames">
                 <div id="imageList" class="image-list"></div>
             </section>
             <section class="card annotation-source-card">
@@ -123,39 +118,23 @@
                 </details>
             </section>
             <section class="card sam2-card">
-                <h3>SAM2 Candidate Generation</h3>
+                <details class="sam-generation-details" open><summary>SAM2</summary>
                 <div class="sam-preset-panel">
                     <div class="sam-field">
-                        <label for="samPresetSelect">SAM preset</label>
+                        <label for="samPresetSelect">Preset</label>
                         <select id="samPresetSelect" class="form-control"></select>
                     </div>
                     <div class="sam-advanced-row">
-                        <button id="openSamSettingsBtn" class="btn btn-secondary sam-expert-btn" type="button">SAM2 advanced settings</button>
+                        <button id="openSamSettingsBtn" class="btn btn-secondary sam-expert-btn" type="button">Advanced settings…</button>
                     </div>
                     <label class="checkbox-row sam-rerun-option" for="keepAnnotationsInput">
                         <input type="checkbox" id="keepAnnotationsInput" checked>
-                        <span>Keep existing annotations on rerun</span>
+                        <span>Keep annotations on rerun</span>
                     </label>
-                    <div class="sam-device-row">
-                        <label for="samDeviceSelect">Device</label>
-                        <select id="samDeviceSelect" class="form-control">
-                            <option value="auto">Auto</option>
-                            <option value="cuda">CUDA</option>
-                            <option value="cpu">CPU</option>
-                        </select>
-                        <span id="samDeviceStatus" class="sam-device-status">Auto</span>
-                    </div>
                     <div id="samReadinessText" class="sam-readiness-text warning">SAM2 model status is not loaded yet.</div>
-                    <div class="sam-preset-meta">
-                        <span>Active preset</span>
-                        <span id="samPresetSummary">Cell 1920x1440</span>
-                    </div>
                     <div id="samRiskText" class="sam-risk-text">Current preset is within normal limits.</div>
-                    <div class="sam-preprocess-panel">
-                        <div class="sam-subsection-header">
-                            <span>Preprocessing</span>
-                            <small>Display + SAM2 input</small>
-                        </div>
+                    <details class="sam-preprocess-panel">
+                        <summary>Image preprocessing</summary>
                         <div class="preprocess-panel">
                             <label for="preprocessMethodSelect">Method</label>
                             <select id="preprocessMethodSelect" class="form-control">
@@ -173,12 +152,25 @@
                             </div>
                             <div id="preprocessSummary" class="preprocess-summary">Original image is preserved.</div>
                         </div>
-                    </div>
+                    </details>
                 </div>
+                <div class="candidate-clear-actions"><button id="clearCandidatesBtn" class="btn btn-secondary" disabled title="Remove generated candidates; keep annotations.">Clear candidates</button></div>
+                </details>
             </section>
         </aside>
 
         <main class="main-content">
+            <div class="workspace-toolbar" role="group" aria-label="Canvas and annotation tools">
+                <button id="toggleProjectPanelBtn" class="btn btn-secondary panel-toggle" type="button" aria-controls="projectPanel" aria-expanded="true" aria-label="Collapse images and SAM2 panel" title="Collapse images and SAM2 panel"><span class="panel-glyph panel-glyph-left" aria-hidden="true"></span></button>
+                <div class="workspace-annotation-tools"><button id="manualAnnotationBtn" class="btn btn-secondary manual-toggle-btn" disabled>Manual Box (B)</button><button id="runSamBtn" class="btn btn-primary" disabled>Generate SAM2 candidates</button></div>
+                <button id="toggleAnnotationPanelBtn" class="btn btn-secondary panel-toggle" type="button" aria-controls="annotationPanel" aria-expanded="true" aria-label="Collapse classes and annotation panel" title="Collapse classes and annotation panel"><span class="panel-glyph panel-glyph-right" aria-hidden="true"></span></button>
+            </div>
+            <div id="workingState" class="working-state" role="status" aria-live="polite" aria-atomic="true">
+                <span id="workingTool">Tool: Select / pan</span>
+                <span id="workingClass">Class: None selected</span>
+                <span id="workingReview">Review: No image</span>
+                <span id="workingSelection">No selection</span>
+            </div>
             <div id="canvas-container">
                 <canvas id="mainCanvas"></canvas>
 
@@ -186,12 +178,19 @@
                     <div class="canvas-empty-state-card">
                         <p>Load an image or open a folder to begin</p>
                         <div class="canvas-empty-state-actions">
-                            <label for="loadImageInput" class="btn btn-primary">Load image</label>
-                            <label for="openFolderInput" class="btn btn-secondary">Open folder</label>
+                            <label for="loadImageInput" class="btn btn-primary" role="button" tabindex="0">Load image</label>
+                            <label for="openFolderInput" class="btn btn-secondary" role="button" tabindex="0">Open folder</label>
                         </div>
                     </div>
                 </div>
 
+                <details id="canvasVisibility" class="canvas-visibility">
+                    <summary id="canvasVisibilitySummary">View overlays</summary>
+                    <label><input id="showCandidatesInput" type="checkbox" checked> Candidates</label>
+                    <label><input id="showAnnotationsInput" type="checkbox" checked> Annotations</label>
+                    <label><input id="showLabelsInput" type="checkbox" checked> Annotation IDs</label>
+                    <label><input id="imageOnlyInput" type="checkbox"> Image only</label>
+                </details>
                 <div id="view-controls" class="view-controls">
                     <button id="zoomInBtn" class="view-control-btn" title="Zoom In">+</button>
                     <button id="zoomOutBtn" class="view-control-btn" title="Zoom Out">-</button>
@@ -202,7 +201,7 @@
                     <span id="preprocessOverlayTitle">Preprocessing active</span>
                     <small id="preprocessOverlayDetail">Display and SAM input use the processed image</small>
                 </div>
-                <div id="oneClickModeBadge" class="one-click-mode-badge hidden"></div>
+                <div id="oneClickModeBadge" hidden class="one-click-mode-badge hidden"></div>
                 <div id="loader" class="loader-overlay hidden">
                     <div class="spinner"></div>
                     <p id="loaderText">Processing...</p>
@@ -210,21 +209,22 @@
             </div>
         </main>
 
-        <aside class="side-panel annotation-panel">
+        <aside id="annotationPanel" class="side-panel annotation-panel" aria-label="Classes and annotations">
             <section class="card class-card class-assignment-card">
                 <h3>Class Assignment</h3>
                 <div class="class-workflow-panel">
-                    <div id="selectionSummary" class="selection-summary">Selected: 0 candidates, 0 annotations</div>
-                    <div id="nextActionText" class="next-action-text">Load an image or folder.</div>
+                    <div id="selectionSummary" hidden class="selection-summary">Selected: 0 candidates, 0 annotations</div>
+                    <div id="nextActionText" hidden class="next-action-text">Load an image or folder.</div>
                     <div class="form-group">
                         <label for="classificationSelect">Active class</label>
                         <select id="classificationSelect" class="form-control" disabled>
                             <option value="">Create a class first</option>
                         </select>
                     </div>
-                    <div class="quick-class-row">
-                        <input type="text" id="quickClassInput" class="form-control" placeholder="Create class and select it">
-                        <button id="quickAddClassBtn" class="btn btn-secondary" type="button">Create + select</button>
+                    <div class="quick-class-row" hidden>
+                        <input type="text" id="quickClassInput" class="form-control" placeholder="New class name" aria-label="New class name">
+                        <button id="quickAddClassBtn" class="btn btn-primary" type="button">Create class</button>
+                        <button id="cancelQuickClassBtn" class="btn btn-secondary" type="button">Cancel</button>
                     </div>
                     <button id="applyClassificationBtn" class="btn btn-primary" disabled>Apply class to selection</button>
                     <label class="one-click-accept-row" for="oneClickAcceptInput">
@@ -232,24 +232,23 @@
                         <span>One-click accept active class</span>
                     </label>
                     <div class="annotation-history-actions">
-                        <button id="undoBtn" class="btn btn-secondary" disabled>Undo (U / Ctrl+Z)</button>
-                        <button id="redoBtn" class="btn btn-secondary" disabled>Redo (Ctrl+Y)</button>
+                        <button id="undoBtn" class="btn btn-secondary" disabled title="Undo (U or Ctrl+Z)">Undo</button>
+                        <button id="redoBtn" class="btn btn-secondary" disabled title="Redo (Ctrl+Y)">Redo</button>
                     </div>
                 </div>
-                <div class="class-manager-panel">
-                    <div class="class-manager-header">
-                        <span>Class Manager</span>
-                        <small>Names, colors, hotkeys</small>
-                    </div>
-                    <div class="scope-helper-text">Hotkeys apply the class to the current selection.</div>
+                <details class="class-manager-panel" open><summary title="Select a class to annotate. Use Edit to change its settings.">Classes</summary>
+
+                    <div id="classSourceSummary" class="scope-helper-text" role="status" aria-live="polite"></div>
                     <div id="classManagerFeedback" class="class-manager-feedback hidden"></div>
+                    <input id="classListSearch" type="search" class="form-control" placeholder="Find a class" aria-label="Search classes">
+                    <div id="classSearchEmpty" class="scope-helper-text" hidden>No classes match this search.</div>
                     <div id="classManager" class="class-manager"></div>
-                    <button id="addClassBtn" class="btn btn-secondary class-add-btn">Add empty class row</button>
-                </div>
+                    <button id="addClassBtn" class="btn btn-secondary class-add-btn">Add class</button>
+                </details>
             </section>
             <section class="card log-card">
-                <h3>Annotation Log</h3>
-                <div id="annotationLogHint" class="annotation-log-hint hidden"></div>
+                <h3>Annotations</h3>
+                <div id="annotationLogHint" hidden class="annotation-log-hint hidden"></div>
                 <div class="table-container">
                     <table>
                         <thead> <tr> <th>ID</th> <th>Class</th> <th>Bounding Box</th> </tr> </thead>
@@ -257,10 +256,10 @@
                     </table>
                 </div>
             </section>
-            <section class="card utility-card">
-                <details class="utility-details">
+            <section id="annotationInspectorCard" class="card utility-card">
+                <details class="utility-details" open>
                     <summary class="utility-summary">
-                        <span>Precise Box Edit</span>
+                        <span>Selected annotation</span>
                         <small id="selectedAnnotationSummary">None</small>
                     </summary>
                     <div class="annotation-inspector">
@@ -285,8 +284,7 @@
                         <small>Import/load</small>
                     </summary>
                     <div class="annotation-file-actions">
-                        <div class="scope-helper-text">Imports one annotation file into the current image only.</div>
-                        <div class="scope-helper-text">Import/load replaces current-image annotations.</div>
+                        <div class="scope-helper-text">Importing replaces annotations in the current image.</div>
                         <button id="loadAnnotationFileBtn" class="btn btn-secondary" disabled>Import current image</button>
                         <input type="file" id="loadAnnotationFileInput" accept=".csv,.txt,.json,.xml,text/csv,text/plain,application/json,application/xml,text/xml" hidden>
                         <button id="loadServerAnnotationsBtn" class="btn btn-secondary" disabled>Load saved current image</button>
@@ -294,13 +292,24 @@
                 </details>
             </section>
         </aside>
+
+        <footer class="workspace-footer" aria-label="Save and review current image">
+            <div class="workspace-save"><span id="unsavedStateIndicator" class="unsaved-state-indicator saved">All changes saved</span></div>
+            <div class="workspace-navigation" aria-label="Image navigation and saving">
+                <button id="prevImageBtn" class="btn btn-secondary" disabled>Previous</button>
+                <button id="saveServerBtn" class="btn btn-secondary" disabled>Save</button>
+                <button id="nextImageBtn" class="btn btn-secondary" disabled>Next</button>
+            </div>
+            <div class="workspace-review"><button id="reopenReviewBtn" class="btn btn-secondary" disabled>Reopen review</button><button id="confirmEmptyBtn" class="btn btn-secondary" disabled title="Confirm that this image contains no target objects, save that review, and open the next image.">Confirm empty &amp; next</button><button id="reviewAndNextBtn" class="btn btn-primary" disabled title="Save annotations, mark this image reviewed, and open the next image.">Mark reviewed &amp; next</button></div>
+
+        </footer>
     </div>
     <div id="logContextMenu" class="context-menu hidden">
         <div class="context-menu-item context-menu-item-delete" id="logDeleteBtn">Delete</div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-item" id="logCancelBtn">Cancel</div>
     </div>
-    
+
     <div id="samSettingsModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="samSettingsTitle" aria-describedby="samSettingsWarning">
         <div class="modal-content sam-settings-modal-content">
             <header class="modal-header">
@@ -309,57 +318,70 @@
             </header>
             <div class="modal-body">
                 <div id="samSettingsWarning" class="sam-warning">
-                    Advanced SAM2 settings can make segmentation slow, unstable, or run out of GPU memory.
+                    Use a preset first. Higher sampling and crop settings increase processing time and memory use.
                 </div>
-                <div class="sam-settings-grid">
-                    <label for="samAreaModeSelect">Area mode</label>
+                <section class="sam-dialog-device">
+                    <h3>Compute device</h3>
+                    <div class="sam-device-row">
+                        <label for="samDeviceSelect">Device</label>
+                        <select id="samDeviceSelect" class="form-control">
+                            <option value="auto">Auto</option>
+                            <option value="cuda">CUDA</option>
+                            <option value="cpu">CPU</option>
+                        </select>
+                        <span id="samDeviceStatus" class="sam-device-status">Auto</span>
+                    </div>
+                    <small>Device changes apply immediately.</small>
+                    <div class="sam-preset-meta">
+                        <span>Active preset</span>
+                        <span id="samPresetSummary">Cell 1920x1440</span>
+                    </div>
+                </section>
+                <details class="sam-tuning-group"><summary>Object size</summary>
+                    <div class="sam-settings-grid">
+<label for="samAreaModeSelect">Area mode</label>
                     <select id="samAreaModeSelect" class="form-control">
                         <option value="pixels">Pixels</option>
                         <option value="percent">% image area</option>
                     </select>
-
-                    <label for="samPointsPerSideInput">Points/side</label>
-                    <input type="number" id="samPointsPerSideInput" class="form-control sam-param-input" min="8" max="128" step="1">
-
-                    <label for="samCropLayersInput">Crop layers</label>
-                    <input type="number" id="samCropLayersInput" class="form-control sam-param-input" min="0" max="3" step="1">
-
-                    <label for="samCropOverlapInput">Crop overlap</label>
-                    <input type="number" id="samCropOverlapInput" class="form-control sam-param-input" min="0" max="0.9" step="0.05">
-
-                    <label for="samCropDownscaleInput">Crop downscale</label>
-                    <input type="number" id="samCropDownscaleInput" class="form-control sam-param-input" min="1" max="8" step="1">
-
-                    <label for="samPointsPerBatchInput">Points/batch</label>
-                    <input type="number" id="samPointsPerBatchInput" class="form-control sam-param-input" min="16" max="256" step="1">
-
-                    <label for="samMinMaskRegionAreaInput">Min mask region</label>
-                    <input type="number" id="samMinMaskRegionAreaInput" class="form-control sam-param-input" min="0" step="1">
-
-                    <label for="samMinObjectAreaInput">Min object area</label>
+<label for="samMinObjectAreaInput">Min object area</label>
                     <input type="number" id="samMinObjectAreaInput" class="form-control sam-param-input" min="0" step="any">
-
-                    <label for="samMaxObjectAreaInput">Max object area</label>
+<label for="samMaxObjectAreaInput">Max object area</label>
                     <input type="number" id="samMaxObjectAreaInput" class="form-control sam-param-input" min="0" step="any">
-
-                    <label for="samPredIouInput">Pred IoU</label>
+<label for="samMinMaskRegionAreaInput">Min mask region</label>
+                    <input type="number" id="samMinMaskRegionAreaInput" class="form-control sam-param-input" min="0" step="1">
+                    </div>
+                </details>
+                <details class="sam-tuning-group"><summary>Candidate quality</summary>
+                    <div class="sam-settings-grid">
+<label for="samPredIouInput" title="Minimum predicted mask quality">Mask quality (predicted IoU)</label>
                     <input type="number" id="samPredIouInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
-
-                    <label for="samStabilityInput">Stability</label>
+<label for="samStabilityInput">Stability</label>
                     <input type="number" id="samStabilityInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
-
-                    <label for="samStabilityOffsetInput">Stability offset</label>
+<label for="samStabilityOffsetInput">Stability offset</label>
                     <input type="number" id="samStabilityOffsetInput" class="form-control sam-param-input" min="0" max="2" step="0.1">
-
-                    <label for="samBoxNmsInput">Box NMS</label>
+<label for="samBoxNmsInput">Box overlap threshold (NMS)</label>
                     <input type="number" id="samBoxNmsInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
-
-                    <label for="samCropNmsInput">Crop NMS</label>
+<label for="samCropNmsInput">Crop overlap threshold (NMS)</label>
                     <input type="number" id="samCropNmsInput" class="form-control sam-param-input" min="0" max="1" step="0.01">
-
-                    <label for="samUseM2mInput">Use M2M</label>
+                    </div>
+                </details>
+                <details class="sam-tuning-group"><summary>Sampling and performance</summary>
+                    <div class="sam-settings-grid">
+<label for="samPointsPerSideInput" title="Number of sample points along each image side">Sampling points per side</label>
+                    <input type="number" id="samPointsPerSideInput" class="form-control sam-param-input" min="8" max="128" step="1">
+<label for="samCropLayersInput">Crop layers</label>
+                    <input type="number" id="samCropLayersInput" class="form-control sam-param-input" min="0" max="3" step="1">
+<label for="samCropOverlapInput">Crop overlap</label>
+                    <input type="number" id="samCropOverlapInput" class="form-control sam-param-input" min="0" max="0.9" step="0.05">
+<label for="samCropDownscaleInput">Crop downscale</label>
+                    <input type="number" id="samCropDownscaleInput" class="form-control sam-param-input" min="1" max="8" step="1">
+<label for="samPointsPerBatchInput">Points/batch</label>
+                    <input type="number" id="samPointsPerBatchInput" class="form-control sam-param-input" min="16" max="256" step="1">
+<label for="samUseM2mInput">Mask refinement (M2M)</label>
                     <input type="checkbox" id="samUseM2mInput" class="sam-checkbox">
-                </div>
+                    </div>
+                </details>
                 <div class="sam-settings-actions">
                     <button id="applySamSettingsBtn" class="btn btn-primary" type="button">Apply SAM Settings</button>
                     <button id="resetSamPresetBtn" class="btn btn-secondary" type="button">Reset to Preset</button>
@@ -436,7 +458,7 @@
                     <li><b>Precise edit:</b> Use the Selected Box fields for exact x/y/w/h values.</li>
                     <li><b>Nudge:</b> Select boxes and use arrow keys. Hold Shift for larger moves.</li>
                 </ul>
-                
+
                 <h3>Canvas Controls</h3>
                 <ul>
                     <li><b>Pan:</b> Click and drag the image background.</li>
@@ -462,7 +484,22 @@
         </div>
     </div>
     <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
-    <script src="static/apiClient.js"></script>
+    <dialog id="projectDialog">
+        <h3>Projects</h3>
+        <p>Current project: <span id="activeProjectName"></span></p>
+        <p>Switching clears the image queue. Select the source images again after opening a project.</p>
+        <label for="savedProjectSelect">Saved project</label>
+        <select id="savedProjectSelect" class="form-control"></select>
+        <button id="openProjectBtn" type="button" class="btn btn-secondary">Open project</button>
+        <hr>
+        <label for="newProjectName">New project name</label>
+        <input id="newProjectName" class="form-control" maxlength="120" placeholder="Project name">
+        <label><input id="reuseProjectClasses" type="checkbox"> Reuse the current project's classes</label>
+        <button id="createProjectBtn" type="button" class="btn btn-primary">Create project</button>
+        <p id="projectDialogStatus" role="status"></p>
+        <button id="closeProjectDialogBtn" type="button" class="btn btn-secondary">Cancel</button>
+    </dialog>
+    <script src="static/apiClient-refined.js"></script>
     <script src="static/apiWorkflows.js"></script>
     <script src="static/frontendConfig.js"></script>
     <script src="static/stateStore.js"></script>
@@ -477,14 +514,16 @@
     <script src="static/projectSettingsClient.js"></script>
     <script src="static/settingsController.js"></script>
     <script src="static/samSettingsUiController.js"></script>
-    <script src="static/classManager.js"></script>
-    <script src="static/classUiController.js"></script>
+    <script src="static/classManager-refined.js"></script>
+    <script src="static/classUiController-refined.js"></script>
     <script src="static/controlsUiController.js"></script>
     <script src="static/annotationLogController.js"></script>
     <script src="static/modalKeyboardController.js"></script>
     <script src="static/canvasGeometry.js"></script>
     <script src="static/canvasInteractionController.js"></script>
-    <script src="static/canvasRenderer.js"></script>
-    <script src="static/script.js"></script>
+    <script src="static/canvasRenderer-refined.js"></script>
+    <script src="static/manualClassPicker.js"></script>
+    <script src="static/script-refined.js"></script>
+    <script src="static/refinedUi.js"></script>
 </body>
 </html>

@@ -3,11 +3,12 @@ import io
 import json
 import os
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import cv2
 import torch
-from flask import Blueprint, Flask, jsonify, request, send_from_directory
+from flask import Blueprint, Flask, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -60,11 +61,18 @@ from project_config import (
 )
 from project_manifest import (
     PROJECT_MANIFEST_SCHEMA_VERSION,
+    create_project_manifest,
     load_or_create_project_manifest,
     project_manifest_path,
     save_project_manifest,
     update_manifest_classes,
     update_manifest_settings,
+)
+from review_io import (
+    invalidate_review,
+    load_review,
+    save_review,
+    validate_review_status,
 )
 from sam_service import (
     SamInferenceBusyError,
@@ -381,7 +389,9 @@ def _display_path(path):
         return os.path.abspath(path).replace(os.sep, "/")
 
 def _image_info_from_payload(raw_image):
-    return image_info_from_payload(raw_image)
+    image = image_info_from_payload(raw_image)
+    image["image_identity"] = raw_image.get("image_identity") if isinstance(raw_image, dict) else None
+    return image
 
 def _duplicate_stems_for_images(images):
     return duplicate_stems_for_images(images)
@@ -420,7 +430,8 @@ sam_model_handler = SAMModelHandler(
 
 @main_bp.route("/")
 def serve_index():
-    return send_from_directory(app.static_folder, 'index.html')
+    filename = 'index.html' if request.args.get('ui') == 'original' else 'index-refined.html'
+    return send_from_directory(app.static_folder, filename)
 
 
 @app.after_request
@@ -544,6 +555,122 @@ def load_classes_endpoint():
         return jsonify({"error": f"Failed to save project classes: {e}"}), 500
 
 
+def _project_library_dir():
+    return _project_manifest_path() + ".projects"
+
+
+def _stored_project_path(project_id):
+    try:
+        canonical = str(uuid.UUID(str(project_id)))
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("Invalid project ID") from None
+    return os.path.join(_project_library_dir(), canonical + ".json")
+
+
+def _start_fresh_project():
+    """Archive the previous project before creating this server session's workspace."""
+    with PROJECT_STATE_LOCK:
+        current = _project_manifest()
+        fresh = create_project_manifest(settings=current["settings"], classes=[], **_manifest_options())
+        fresh["name"] = "New project"
+        fresh["settings"]["annotation_output_dir"] = os.path.join(
+            DEFAULT_ANNOTATION_OUTPUT_DIR, "projects", fresh["project_id"],
+        )
+        os.makedirs(_project_library_dir(), exist_ok=True)
+        save_project_manifest(
+            current, _stored_project_path(current["project_id"]), **_manifest_options(),
+        )
+        # If either write fails, do not start serving with an unexpected project.
+        # The previous active manifest and its archived copy remain recoverable.
+        _save_manifest(fresh)
+        return fresh
+
+
+@app.before_request
+def guard_project_request():
+    if request.blueprint not in {"project_api", "classes_api", "annotations_api"}:
+        return None
+    PROJECT_STATE_LOCK.acquire()
+    g.project_lock_held = True
+    expected = request.headers.get("X-Project-ID")
+    active_id = _project_manifest()["project_id"]
+    if expected and expected != active_id:
+        return jsonify({"error": "The active project changed. Reload this page before continuing."}), 409
+    if request.method == "POST" and not expected and os.path.isdir(_project_library_dir()):
+        return jsonify({"error": "Project identity required. Open the refined UI and reload before saving."}), 409
+    return None
+
+
+@app.teardown_request
+def release_project_request(error):
+    if g.pop("project_lock_held", False):
+        PROJECT_STATE_LOCK.release()
+
+
+@project_bp.route("/projects", methods=["GET", "POST"])
+def projects_endpoint():
+    current = _project_manifest()
+    if request.method == "GET":
+        projects = {current["project_id"]: current}
+        library = _project_library_dir()
+        if os.path.isdir(library):
+            for filename in os.listdir(library):
+                if not filename.endswith(".json"):
+                    continue
+                try:
+                    path = _stored_project_path(filename[:-5])
+                    manifest = load_or_create_project_manifest(path, **_manifest_options())
+                    projects.setdefault(manifest["project_id"], manifest)
+                except (ValueError, OSError):
+                    continue
+        return jsonify({"active_project_id": current["project_id"], "projects": [
+            {"project_id": item["project_id"], "name": item["name"], "class_count": len(item["classes"])}
+            for item in projects.values()
+        ]})
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
+    try:
+        if data.get("action") == "new":
+            name = data.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+                raise ValueError("Project name must contain 1 to 120 characters")
+            reuse = data.get("reuse_classes", False)
+            if not isinstance(reuse, bool):
+                raise ValueError("reuse_classes must be a boolean")
+            target = create_project_manifest(
+                settings=current["settings"], classes=current["classes"] if reuse else [],
+                **_manifest_options(),
+            )
+            target["name"] = name.strip()
+            target["settings"]["annotation_output_dir"] = os.path.join(
+                DEFAULT_ANNOTATION_OUTPUT_DIR, "projects", target["project_id"],
+            )
+        elif data.get("action") == "open":
+            path = _stored_project_path(data.get("project_id"))
+            if data.get("project_id") == current["project_id"]:
+                return jsonify(current)
+            if not os.path.isfile(path):
+                return jsonify({"error": "Project not found"}), 404
+            target = load_or_create_project_manifest(path, **_manifest_options())
+        else:
+            raise ValueError("Choose new or open")
+        if target["settings"]["sam_device"] == "cuda" and not torch.cuda.is_available():
+            raise ValueError("This project requests CUDA, which is unavailable on this machine.")
+        # Preserve the old project before replacing the active manifest. A failed
+        # write leaves the active project usable and the archived copy intact.
+        os.makedirs(_project_library_dir(), exist_ok=True)
+        save_project_manifest(current, _stored_project_path(current["project_id"]), **_manifest_options())
+        save_project_manifest(target, _stored_project_path(target["project_id"]), **_manifest_options())
+        _save_manifest(target)
+        sam_model_handler.set_requested_device(target["settings"]["sam_device"])
+        return jsonify(target)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except OSError:
+        return jsonify({"error": "Could not switch projects. Your current project has been preserved."}), 500
+
+
 @project_bp.route("/manifest", methods=["GET"])
 def project_manifest_endpoint():
     manifest = _project_manifest()
@@ -652,37 +779,45 @@ def bulk_load_annotations_endpoint():
     for image in images:
         match = _resolve_annotation_match(image, duplicate_stems, annotation_format)
         if match["status"] != "matched":
-            results.append({**match, "annotations": []})
+            results.append({**match, "annotations": [], "review_status": "unreviewed"})
             continue
 
         try:
-            path = _annotation_path_for_image(
-                image["name"],
-                image["display_path"],
-                match["match_mode"],
-                annotation_format,
-            )
-            if match.get("path"):
-                for candidate in _annotation_candidate_paths(image["name"], image["display_path"], annotation_format):
-                    if match["path"] in (_display_path(candidate["path"]), _public_annotation_path(candidate["path"])):
-                        path = candidate["path"]
-                        break
-            results.append({
-                **match,
-                "annotations": _read_annotation_file(
+            with PROJECT_STATE_LOCK:
+                path = _annotation_path_for_image(
+                    image["name"],
+                    image["display_path"],
+                    match["match_mode"],
+                    annotation_format,
+                )
+                if match.get("path"):
+                    for candidate in _annotation_candidate_paths(image["name"], image["display_path"], annotation_format):
+                        if match["path"] in (_display_path(candidate["path"]), _public_annotation_path(candidate["path"])):
+                            path = candidate["path"]
+                            break
+                annotations = _read_annotation_file(
                     path,
                     annotation_format,
                     image_name=image["name"],
                     image_size=(image.get("width"), image.get("height")),
                     classes=_load_project_classes(),
-                ),
-            })
+                )
+                results.append({
+                    **match,
+                    "annotations": annotations,
+                    "review_status": load_review(
+                        path, annotations, project_id=_project_manifest()["project_id"],
+                        image_identity=image.get("image_identity"),
+                        image_size=(image.get("width"), image.get("height")), classes=_load_project_classes(),
+                    ),
+                })
         except Exception as e:
             results.append({
                 **match,
                 "status": "error",
                 "exists": False,
                 "annotations": [],
+                "review_status": "unreviewed",
                 "message": f"Failed to load annotations: {e}",
             })
 
@@ -752,6 +887,7 @@ def load_annotations_endpoint():
         return jsonify({
             "exists": False,
             "annotations": [],
+            "review_status": "unreviewed",
             "classes": _load_project_classes(),
             "format": annotation_format,
             "path": _public_annotation_path(path),
@@ -759,23 +895,29 @@ def load_annotations_endpoint():
         })
 
     try:
-        if annotation_format == "yolo":
-            _image_size_from_values(*image_size, required=True, context="YOLO annotations")
-        annotations = _read_annotation_file(
-            path,
-            annotation_format,
-            image_name=image_name,
-            image_size=image_size,
-            classes=_load_project_classes(),
-        )
-        return jsonify({
-            "exists": True,
-            "annotations": annotations,
-            "classes": _load_project_classes(),
-            "format": annotation_format,
-            "path": _public_annotation_path(path),
-            "match": match,
-        })
+        with PROJECT_STATE_LOCK:
+            if annotation_format == "yolo":
+                _image_size_from_values(*image_size, required=True, context="YOLO annotations")
+            annotations = _read_annotation_file(
+                path,
+                annotation_format,
+                image_name=image_name,
+                image_size=image_size,
+                classes=_load_project_classes(),
+            )
+            return jsonify({
+                "exists": True,
+                "annotations": annotations,
+                "review_status": load_review(
+                    path, annotations, project_id=_project_manifest()["project_id"],
+                    image_identity=request.args.get("image_identity"), image_size=image_size,
+                    classes=_load_project_classes(),
+                ),
+                "classes": _load_project_classes(),
+                "format": annotation_format,
+                "path": _public_annotation_path(path),
+                "match": match,
+            })
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
@@ -808,37 +950,47 @@ def save_annotations_endpoint():
             context="YOLO annotations" if annotation_format == "yolo" else "annotations",
         )
         annotations, clamped_count = _clamp_annotations_to_image(annotations, normalized_image_size)
+        review_status = validate_review_status(
+            data.get("review_status"), annotations, data.get("image_identity"), normalized_image_size,
+        )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
     try:
-        path = _annotation_path_for_image(image_name, image_path, match_mode, annotation_format)
-        if recoverable_file_exists(path) and not overwrite:
+        with PROJECT_STATE_LOCK:
+            path = _annotation_path_for_image(image_name, image_path, match_mode, annotation_format)
+            if recoverable_file_exists(path) and not overwrite:
+                return jsonify({
+                    "error": "Annotation file already exists.",
+                    "exists": True,
+                    "path": _public_annotation_path(path),
+                    "format": annotation_format,
+                }), 409
+
+            invalidate_review(path)
+            classes = _save_project_classes(classes)
+            _write_annotation_file(
+                path,
+                _public_image_name(image_name, image_path),
+                annotations,
+                annotation_format,
+                image_size=normalized_image_size,
+                classes=classes,
+            )
+            save_review(
+                path, review_status, project_id=_project_manifest()["project_id"],
+                image_identity=data.get("image_identity"), image_size=normalized_image_size, classes=classes,
+            )
             return jsonify({
-                "error": "Annotation file already exists.",
-                "exists": True,
+                "saved": True,
+                "review_status": review_status,
+                "count": len(annotations),
+                "clamped_count": clamped_count,
                 "path": _public_annotation_path(path),
                 "format": annotation_format,
-            }), 409
-
-        classes = _save_project_classes(classes)
-        _write_annotation_file(
-            path,
-            _public_image_name(image_name, image_path),
-            annotations,
-            annotation_format,
-            image_size=normalized_image_size,
-            classes=classes,
-        )
-        return jsonify({
-            "saved": True,
-            "count": len(annotations),
-            "clamped_count": clamped_count,
-            "path": _public_annotation_path(path),
-            "format": annotation_format,
-            "match_mode": match_mode,
-            "classes_path": _public_annotation_path(_project_classes_path()),
-        })
+                "match_mode": match_mode,
+                "classes_path": _public_annotation_path(_project_classes_path()),
+            })
     except Exception as e:
         return jsonify({"error": f"Failed to save annotations: {e}"}), 500
 
@@ -897,8 +1049,18 @@ def _register_blueprints(flask_app):
 _register_blueprints(app)
 
 if __name__ == "__main__":
-    app.run(
+    from waitress import create_server
+
+    # Bind first: a duplicate launch must not reset an already-running project.
+    server = create_server(
+        app,
         host=os.environ.get("APP_HOST", "127.0.0.1"),
         port=_positive_int_env("APP_PORT", 5000),
-        debug=False,
+        threads=4,
+        max_request_body_size=app.config["MAX_CONTENT_LENGTH"],
     )
+    try:
+        _start_fresh_project()
+        server.run()
+    finally:
+        server.close()
