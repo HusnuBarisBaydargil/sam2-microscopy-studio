@@ -18,6 +18,7 @@
             nextClassId: 1,
             images: [],
             currentImage: null,
+            pendingOperations: new Map(),
             annotationsByImage: new Map(),
             candidateAnnotationsByImage: new Map(),
             annotationHistoryByImage: new Map(),
@@ -140,6 +141,25 @@
         state.annotationHistoryByImage.set(imageId, history);
     }
 
+    // A replaced image list is a new session, even when filenames/IDs are identical.
+    // Each operation key also has a latest-request token to reject out-of-order replies.
+    function beginOperation(state, key, { imageRecord = null, trackAnnotations = false } = {}) {
+        const images = state.images;
+        const token = {};
+        const operationKey = imageRecord ? `${key}:${imageRecord.id}` : key;
+        const annotationSnapshot = () => JSON.stringify([
+            state.annotationsByImage.get(imageRecord.id) || [],
+            state.candidateAnnotationsByImage.get(imageRecord.id) || [],
+            imageRecord.reviewStatus
+        ]);
+        const snapshot = trackAnnotations ? annotationSnapshot() : null;
+        state.pendingOperations.set(operationKey, token);
+        return () => state.images === images
+            && state.pendingOperations.get(operationKey) === token
+            && (!imageRecord || images.includes(imageRecord))
+            && (!trackAnnotations || annotationSnapshot() === snapshot);
+    }
+
     function currentRedoHistory(state) {
         const imageId = currentImageId(state);
         if (!imageId) return [];
@@ -161,7 +181,28 @@
 
     function markCurrentImageDirty(state) {
         const imageId = currentImageId(state);
-        if (imageId) state.dirtyImages.add(imageId);
+        if (imageId) markImageDirty(state, state.currentImage);
+    }
+
+    function markImageDirty(state, imageRecord) {
+        if (!imageRecord) return;
+        imageRecord.reviewStatus = 'in_progress';
+        state.dirtyImages.add(imageRecord.id);
+    }
+
+    function reviewClassSignature(state) {
+        return JSON.stringify(state.classes.map(cls => [cls.id, cls.name])
+            .sort((left, right) => left[0] - right[0]));
+    }
+
+    function invalidateReviewsForClassChanges(state) {
+        const signature = reviewClassSignature(state);
+        state.images.forEach(imageRecord => {
+            if (['reviewed', 'confirmed_empty'].includes(imageRecord.reviewStatus)
+                && imageRecord.reviewClassSignature !== signature) {
+                markImageDirty(state, imageRecord);
+            }
+        });
     }
 
     function resetInteractionState(state) {
@@ -180,6 +221,7 @@
     }
 
     function resetProjectState(state) {
+        state.pendingOperations.clear();
         state.images = [];
         state.currentImage = null;
         state.annotationsByImage.clear();
@@ -211,6 +253,7 @@
     window.SAM2StateStore = {
         createAppState,
         initializeImageState,
+        beginOperation,
         currentImageId,
         currentImageIndex,
         currentAnnotations,
@@ -223,6 +266,9 @@
         setCurrentRedoHistory,
         currentDisplayImage,
         markCurrentImageDirty,
+        markImageDirty,
+        reviewClassSignature,
+        invalidateReviewsForClassChanges,
         resetInteractionState,
         resetProjectState
     };

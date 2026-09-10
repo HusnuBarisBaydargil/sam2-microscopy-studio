@@ -9,6 +9,9 @@
         } = helpers;
         const {
             imageLoaded,
+            reviewStatus = 'unreviewed',
+            savingAnnotations = false,
+            classChangesPending = false,
             samHasRun,
             selectionExists,
             historyExists,
@@ -86,15 +89,20 @@
         refs.refreshMatchesBtn.textContent = localAnnotationSourceActive ? 'Check Local Matches' : 'Check Matches';
         refs.loadMatchedBtn.textContent = localAnnotationSourceActive ? 'Import Local Matched' : 'Import Matched';
         refs.useServerAnnotationSourceBtn.disabled = !localAnnotationSourceActive;
-        refs.saveServerBtn.disabled = !imageLoaded;
-        refs.saveAllServerBtn.disabled = dirtyImageCount === 0;
-        refs.unsavedStateIndicator.textContent = unsavedStateText(dirtyImageCount, currentImageDirty);
-        refs.unsavedStateIndicator.title = dirtyImageCount > 0
+        refs.reviewAndNextBtn.disabled = !imageLoaded || !annotationsExist || savingAnnotations;
+        refs.confirmEmptyBtn.disabled = !imageLoaded || annotationsExist || savingAnnotations;
+        refs.reopenReviewBtn.disabled = !imageLoaded || !['reviewed', 'confirmed_empty'].includes(reviewStatus) || savingAnnotations;
+        refs.saveServerBtn.disabled = !imageLoaded || savingAnnotations;
+        refs.saveAllServerBtn.disabled = dirtyImageCount === 0 || savingAnnotations;
+        refs.unsavedStateIndicator.textContent = unsavedStateText(dirtyImageCount, currentImageDirty, classChangesPending);
+        refs.unsavedStateIndicator.title = classChangesPending
+            ? 'Class changes have not been saved yet.'
+            : dirtyImageCount > 0
             ? 'There are unsaved annotation changes.'
             : 'No unsaved annotation changes.';
         if (refs.unsavedStateIndicator.classList) {
-            refs.unsavedStateIndicator.classList.toggle('dirty', dirtyImageCount > 0);
-            refs.unsavedStateIndicator.classList.toggle('saved', dirtyImageCount === 0);
+            refs.unsavedStateIndicator.classList.toggle('dirty', dirtyImageCount > 0 || classChangesPending);
+            refs.unsavedStateIndicator.classList.toggle('saved', dirtyImageCount === 0 && !classChangesPending);
         }
         refs.refreshMatchesBtn.disabled = imageCount === 0;
         refs.loadMatchedBtn.disabled = !matchSummary || ((matchSummary.matched || matchSummary.loaded || 0) === 0);
@@ -102,7 +110,11 @@
         refs.nextImageBtn.disabled = currentImageIndex === -1 || currentImageIndex >= imageCount - 1;
     }
 
-    function unsavedStateText(dirtyImageCount, currentImageDirty) {
+    function unsavedStateText(dirtyImageCount, currentImageDirty, classChangesPending = false) {
+        if (classChangesPending) {
+            return dirtyImageCount === 0 ? 'Unsaved class changes'
+                : `${unsavedStateText(dirtyImageCount, currentImageDirty)} · classes`;
+        }
         if (dirtyImageCount === 0) return 'All changes saved';
         if (currentImageDirty && dirtyImageCount === 1) return 'Unsaved changes: current image';
         if (currentImageDirty) return `Unsaved changes: current + ${dirtyImageCount - 1} other`;
@@ -113,8 +125,8 @@
         if (!state.imageLoaded) return 'Load an image or folder.';
         if (state.selectionExists) return 'Apply active class or press a class hotkey.';
         if (state.candidatesExist) return 'Select candidate boxes.';
-        if (state.annotationsExist) return 'Review, edit, save, or export annotations.';
-        return 'Generate SAM2 candidates or draw manual boxes.';
+        if (state.annotationsExist) return 'Check all objects, then Save and mark reviewed.';
+        return 'Annotate target objects, or Confirm empty after checking the image.';
     }
 
     window.SAM2ControlsUiController = {

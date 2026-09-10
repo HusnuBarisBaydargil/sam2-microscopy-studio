@@ -226,7 +226,7 @@
                     `Matched annotations for "${fileName || imageIndex + 1}" have not been loaded into the browser.`
                 ));
             } else if (annotationMatch?.status === 'ambiguous') {
-                warnings.push(issue(
+                errors.push(issue(
                     'ambiguous_annotation_match',
                     `Image "${fileName || imageIndex + 1}" has an unresolved ambiguous annotation match.`
                 ));
@@ -242,7 +242,8 @@
                 id: imageIndex + 1,
                 file_name: fileName,
                 width: dimensions?.width || 0,
-                height: dimensions?.height || 0
+                height: dimensions?.height || 0,
+                review_status: imageRecord.reviewStatus || 'unreviewed'
             };
             cocoImages.push(cocoImage);
 
@@ -250,7 +251,24 @@
                 ? [...annotationsByImage.get(imageRecord.id)]
                 : [];
             rawAnnotations.sort((left, right) => Number(left?.id || 0) - Number(right?.id || 0));
-            if (rawAnnotations.length === 0) emptyImageCount++;
+            const reviewStatus = imageRecord.reviewStatus || 'unreviewed';
+            if (reviewStatus !== 'reviewed' && reviewStatus !== 'confirmed_empty') {
+                errors.push(issue(
+                    'image_not_reviewed',
+                    `Image "${fileName}" needs review. Mark it reviewed or explicitly confirm it is empty before export.`
+                ));
+            } else if (reviewStatus === 'reviewed' && rawAnnotations.length === 0) {
+                errors.push(issue(
+                    'reviewed_image_empty',
+                    `Image "${fileName}" is marked reviewed but has no annotations. Explicitly confirm it is empty before export.`
+                ));
+            } else if (reviewStatus === 'confirmed_empty' && rawAnnotations.length > 0) {
+                errors.push(issue(
+                    'confirmed_empty_has_annotations',
+                    `Image "${fileName}" is marked confirmed empty but contains annotations. Review its annotations before export.`
+                ));
+            }
+            if (reviewStatus === 'confirmed_empty' && rawAnnotations.length === 0) emptyImageCount++;
 
             const localAnnotationIds = new Set();
             rawAnnotations.forEach(annotation => {
@@ -303,7 +321,7 @@
             warnings.push(issue('unaccepted_candidates', `${candidateCount} unaccepted SAM candidate${candidateCount === 1 ? '' : 's'} are not included.`));
         }
         if (emptyImageCount > 0) {
-            warnings.push(issue('empty_images', `${emptyImageCount} image${emptyImageCount === 1 ? '' : 's'} have no annotations and are included as negative examples.`));
+            warnings.push(issue('empty_images', `${emptyImageCount} explicitly confirmed empty image${emptyImageCount === 1 ? '' : 's'} are included as negative examples.`));
         }
         if (cocoAnnotations.length === 0) warnings.push(issue('empty_dataset', 'The project contains no final annotations.'));
 

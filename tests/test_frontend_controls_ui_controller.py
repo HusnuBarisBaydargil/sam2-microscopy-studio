@@ -118,6 +118,9 @@ def test_controls_ui_controller_exports_expected_button_behavior():
                 useServerAnnotationSourceBtn: element(),
                 saveServerBtn: element(),
                 saveAllServerBtn: element(),
+                reviewAndNextBtn: element(),
+                confirmEmptyBtn: element(),
+                reopenReviewBtn: element(),
                 unsavedStateIndicator: element(),
                 selectionSummary: element(),
                 nextActionText: element(),
@@ -203,6 +206,9 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         assert.strictEqual(activeRefs.loadMatchedBtn.textContent, 'Import Local Matched');
         assert.strictEqual(activeRefs.useServerAnnotationSourceBtn.disabled, false);
         assert.strictEqual(activeRefs.saveAllServerBtn.disabled, false);
+        assert.strictEqual(activeRefs.reviewAndNextBtn.disabled, false);
+        assert.strictEqual(activeRefs.confirmEmptyBtn.disabled, true);
+        assert.strictEqual(activeRefs.reopenReviewBtn.disabled, true);
         assert.strictEqual(activeRefs.unsavedStateIndicator.textContent, 'Unsaved changes: current + 1 other');
         assert.strictEqual(activeRefs.unsavedStateIndicator.title, 'There are unsaved annotation changes.');
         assert.strictEqual(activeRefs.unsavedStateIndicator.classList.contains('dirty'), true);
@@ -280,9 +286,9 @@ def test_controls_ui_controller_exports_expected_button_behavior():
         assert.strictEqual(inactiveRefs.nextImageBtn.disabled, true);
         assert.strictEqual(controls.unsavedStateText(1, true), 'Unsaved changes: current image');
         assert.strictEqual(controls.unsavedStateText(1, false), 'Unsaved changes: 1 image');
-        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: false, annotationsExist: false }), 'Generate SAM2 candidates or draw manual boxes.');
+        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: false, annotationsExist: false }), 'Annotate target objects, or Confirm empty after checking the image.');
         assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: true, annotationsExist: false }), 'Select candidate boxes.');
-        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: false, annotationsExist: true }), 'Review, edit, save, or export annotations.');
+        assert.strictEqual(controls.nextActionText({ imageLoaded: true, selectionExists: false, candidatesExist: false, annotationsExist: true }), 'Check all objects, then Save and mark reviewed.');
         """
     )
 

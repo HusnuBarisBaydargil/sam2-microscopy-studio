@@ -9,6 +9,9 @@
         'unannotated',
         'has_candidates',
         'annotated',
+        'needs_review',
+        'reviewed',
+        'confirmed_empty',
         'unsaved',
         'missing_matched'
     ]);
@@ -33,6 +36,7 @@
             preprocessParams: null,
             claheApplied: false,
             samHasRun: false,
+            reviewStatus: 'unreviewed',
             serverAnnotationsChecked: false
         };
     }
@@ -59,7 +63,8 @@
             preprocessLabel,
             publicAnnotationPath
         } = context;
-        const badges = [];
+        const reviewStatus = context.reviewStatus || imageRecord.reviewStatus || 'unreviewed';
+        const badges = [{ type: reviewStatus, label: reviewLabel(reviewStatus), title: `Review status: ${reviewLabel(reviewStatus)}` }];
 
         if (annotations.length > 0) {
             badges.push({ type: 'annotated', label: `Ann ${annotations.length}`, title: `${annotations.length} annotations` });
@@ -112,6 +117,7 @@
             preprocessLabel
         } = context;
         const parts = [
+            reviewLabel(context.reviewStatus || imageRecord.reviewStatus || 'unreviewed'),
             `${annotations.length} annotations`,
             `${candidates.length} SAM candidates`,
         ];
@@ -145,12 +151,32 @@
             isDirty = false,
             match = null
         } = context;
+        const reviewStatus = context.reviewStatus || 'unreviewed';
         return {
+            reviewStatus,
+            reviewed: reviewStatus === 'reviewed' || reviewStatus === 'confirmed_empty',
+            confirmedEmpty: reviewStatus === 'confirmed_empty',
             annotated: annotations.length > 0,
             hasCandidates: candidates.length > 0,
             unsaved: Boolean(isDirty),
             missingMatched: match?.status === 'missing'
         };
+    }
+
+    function reviewLabel(status) {
+        switch (status) {
+            case 'in_progress': return 'In progress';
+            case 'reviewed': return 'Reviewed';
+            case 'confirmed_empty': return 'Confirmed empty';
+            default: return 'Unreviewed';
+        }
+    }
+
+    function normalizeReviewStatus(status, annotationCount) {
+        if (status === 'unreviewed' || status === 'in_progress') return status;
+        if (status === 'reviewed' && annotationCount > 0) return status;
+        if (status === 'confirmed_empty' && annotationCount === 0) return status;
+        return annotationCount > 0 ? 'in_progress' : 'unreviewed';
     }
 
     function normalizeQueueFilter(filter) {
@@ -159,6 +185,12 @@
 
     function imageMatchesQueueFilter(queueState, filter) {
         switch (normalizeQueueFilter(filter)) {
+            case 'needs_review':
+                return !queueState.reviewed;
+            case 'reviewed':
+                return queueState.reviewed;
+            case 'confirmed_empty':
+                return queueState.confirmedEmpty;
             case 'unannotated':
                 return !queueState.annotated;
             case 'has_candidates':
@@ -179,12 +211,16 @@
         return queueStates.reduce((summary, queueState) => {
             summary.total += 1;
             if (queueState.annotated) summary.annotated += 1;
+            if (queueState.reviewed) summary.reviewed += 1;
+            if (queueState.confirmedEmpty) summary.confirmedEmpty += 1;
             if (queueState.unsaved) summary.unsaved += 1;
             if (queueState.hasCandidates) summary.candidates += 1;
             return summary;
         }, {
             total: 0,
             annotated: 0,
+            reviewed: 0,
+            confirmedEmpty: 0,
             unsaved: 0,
             candidates: 0
         });
@@ -195,6 +231,7 @@
             const size = imageDimensions(imageRecord);
             return {
                 id: imageRecord.id,
+                image_identity: imageRecord.id,
                 name: imageRecord.name,
                 display_path: imageRecord.displayPath,
                 width: size ? size.width : null,
@@ -210,6 +247,8 @@
         imageStateSummary,
         imageDimensions,
         imageQueueState,
+        normalizeReviewStatus,
+        reviewStatusLabel: reviewLabel,
         normalizeQueueFilter,
         imageMatchesQueueFilter,
         imageQueueProgressSummary,

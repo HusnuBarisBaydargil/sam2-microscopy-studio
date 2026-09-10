@@ -42,15 +42,13 @@
         '#56d4dd',
         '#ffa657'
     ];
-    const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'];
-    const ALLOWED_IMAGE_MIME_TYPES = new Set([
-        'image/jpeg',
-        'image/png',
-        'image/bmp',
-        'image/x-ms-bmp',
-        'image/tiff',
-        'image/x-tiff'
-    ]);
+    const ALLOWED_IMAGE_EXTENSIONS = [
+        '.apng', '.bmp', '.bw', '.dib', '.gif', '.icb', '.ico', '.j2c',
+        '.j2k', '.jfif', '.jp2', '.jpc', '.jpe', '.jpeg', '.jpf', '.jpg',
+        '.jpx', '.pbm', '.pcx', '.pgm', '.png', '.pnm', '.ppm', '.qoi',
+        '.rgb', '.rgba', '.sgi', '.tga', '.tif', '.tiff', '.vda', '.vst',
+        '.webp', '.xbm'
+    ];
     const OVERLAY_COLORS = {
         candidate: '#38bdf8',
         contrastStroke: 'rgba(0, 0, 0, 0.82)',
@@ -116,7 +114,6 @@
         ANNOTATION_FORMATS,
         CLASS_COLOR_PALETTE,
         ALLOWED_IMAGE_EXTENSIONS,
-        ALLOWED_IMAGE_MIME_TYPES,
         OVERLAY_COLORS,
         MAX_ZOOM,
         MIN_ZOOM,

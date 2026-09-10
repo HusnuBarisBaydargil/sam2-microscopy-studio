@@ -64,8 +64,8 @@ def test_project_dataset_export_is_deterministic_and_validates_failures():
         const controller = context.window.SAM2ProjectDatasetController;
 
         const images = [
-            { id: 'b', displayPath: 'plate/b.png', width: 100, height: 80 },
-            { id: 'a', displayPath: 'plate/a.png', originalImage: { width: 200, height: 120 } }
+            { id: 'b', displayPath: 'plate/b.png', width: 100, height: 80, reviewStatus: 'confirmed_empty' },
+            { id: 'a', displayPath: 'plate/a.png', originalImage: { width: 200, height: 120 }, reviewStatus: 'reviewed' }
         ];
         const annotationsByImage = new Map([
             ['a', [{ id: 4, bbox: [10, 10, 20, 30], class: 'nucleus', type: 'manual' }]],
@@ -88,6 +88,7 @@ def test_project_dataset_export_is_deterministic_and_validates_failures():
         });
 
         assert.strictEqual(result.validation.valid, true);
+        assert.deepStrictEqual(plain(result.dataset.images.map(image => image.review_status)), ['reviewed', 'confirmed_empty']);
         assert.deepStrictEqual(plain(result.dataset.images.map(image => image.file_name)), [
             'plate/a.png',
             'plate/b.png'
@@ -106,6 +107,37 @@ def test_project_dataset_export_is_deterministic_and_validates_failures():
         ]);
         assert.strictEqual(result.fileName, 'sam2_project_617abb01_coco.json');
         assert.ok(controller.validationSummary(result.validation).startsWith('Project dataset valid:'));
+
+        function reviewExport(reviewStatus, annotations, match = null) {
+            return controller.buildProjectCocoExport({
+                projectId: '617abb01-cea9-48d1-9a8c-660850cd309a',
+                schemaVersion: 1,
+                taskType: 'bounding_box',
+                images: [{ id: 'one', displayPath: 'one.png', width: 100, height: 80, reviewStatus }],
+                annotationsByImage: new Map([['one', annotations]]),
+                annotationMatchesByImage: new Map([['one', match]]),
+                classes: [{ id: 9, name: 'nucleus' }],
+                imageName: image => image.displayPath,
+                imagePath: image => image.displayPath,
+                normalizeAnnotation: annotation => annotation
+            });
+        }
+        const accepted = [{ id: 1, bbox: [1, 1, 10, 10], class: 'nucleus' }];
+        for (const status of [undefined, 'unreviewed', 'in_progress', 'invalid']) {
+            for (const annotations of [[], accepted]) {
+                const blocked = reviewExport(status, annotations);
+                assert.strictEqual(blocked.validation.valid, false);
+                assert.ok(blocked.validation.errors.some(error => error.code === 'image_not_reviewed'));
+                assert.ok(!blocked.validation.warnings.some(warning => warning.code === 'empty_images'));
+            }
+        }
+        assert.strictEqual(reviewExport('reviewed', accepted).validation.valid, true);
+        assert.strictEqual(reviewExport('confirmed_empty', []).validation.valid, true);
+        assert.ok(reviewExport('reviewed', []).validation.errors.some(error => error.code === 'reviewed_image_empty'));
+        assert.ok(reviewExport('confirmed_empty', accepted).validation.errors.some(error => error.code === 'confirmed_empty_has_annotations'));
+        const ambiguous = reviewExport('reviewed', accepted, { status: 'ambiguous' });
+        assert.strictEqual(ambiguous.validation.valid, false);
+        assert.ok(ambiguous.validation.errors.some(error => error.code === 'ambiguous_annotation_match'));
 
         const invalid = controller.buildProjectCocoExport({
             projectId: '',

@@ -135,8 +135,11 @@ def test_file_utils_exports_expected_values_and_validation_behavior():
         assert.strictEqual(utils.isSupportedImageFile({ name: 'cells.tif', type: 'image/tiff' }), true);
         assert.strictEqual(utils.isSupportedImageFile({ name: 'cells.TIFF', type: '' }), true);
         assert.strictEqual(utils.isSupportedImageFile({ name: 'cells.txt', type: 'image/tiff' }), false);
-        assert.strictEqual(utils.isSupportedImageFile({ name: 'cells.tif', type: 'text/plain' }), false);
+        assert.strictEqual(utils.isSupportedImageFile({ name: 'cells.tif', type: 'text/plain' }), true);
         assert.strictEqual(utils.imageSortName({ name: 'cells.tif', webkitRelativePath: 'Plate B/cells.tif' }), 'Plate B/cells.tif');
+        for (const extension of context.window.SAM2FrontendConfig.ALLOWED_IMAGE_EXTENSIONS) {
+            assert.strictEqual(utils.isSupportedImageFile({name: `cells${extension.toUpperCase()}`, type: 'application/octet-stream'}), true);
+        }
         assert.strictEqual(utils.imageSortName({ name: 'cells.tif' }), 'cells.tif');
         """
     )
