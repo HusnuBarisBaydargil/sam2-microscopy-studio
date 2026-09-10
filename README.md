@@ -118,6 +118,7 @@ docker run --rm -p 127.0.0.1:5000:5000 `
   -v "${PWD}/studio-data:/app/data" `
   -e PROJECT_MANIFEST_FILE=/app/data/project_manifest.json `
   -e ANNOTATION_OUTPUT_DIR=/app/data/annotations `
+  -e ALLOW_ABSOLUTE_ANNOTATION_DIR=1 `
   microscopy-studio
 ```
 
