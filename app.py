@@ -762,6 +762,12 @@ def segmentation_document_endpoint():
             restored = [item for item in manifest.get("retired_classes", [])
                         if item["id"] in used_ids and data.get("restore_classes") is not False]
             if restored:
+                names = {item["name"] for item in manifest["classes"]}
+                for item in restored:
+                    if item["name"] in names:
+                        return jsonify({"error": f'Cannot restore class "{item["name"]}": another class uses that name. '
+                                        'Resolve the duplicate class name and reopen this image. Saved annotations are unchanged.'}), 409
+                    names.add(item["name"])
                 manifest = update_manifest_classes(manifest, manifest["classes"] + restored)
                 _save_manifest(manifest)
             return jsonify({"document": document, "revision": revision, "recovered": recovered,

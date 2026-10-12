@@ -80,6 +80,61 @@ def test_folder_autosave_restores_retired_class_with_original_id(client, polygon
     assert response.get_json()['document']['annotations'][0]['class_id'] == classes[0]['id']
 
 
+@pytest.mark.parametrize('folder', [False, True])
+def test_retired_class_name_conflict_preserves_files_and_manifest(client, polygon_project, app_module, folder):
+    headers, image, doc = polygon_project
+    endpoint = '/api/project/segmentation'
+    original_classes = client.get('/api/classes').get_json()['classes']
+    classes = client.post('/api/classes', headers=headers, json={
+        'classes': original_classes + [{'name': 'Other'}]}).get_json()['classes']
+    retired_id, active_id = classes[0]['id'], classes[1]['id']
+    doc['next_object_id'] = 12
+    doc['annotations'][0].update(id=7, source='sam2', edited=True, labelme={'group_id': 42})
+    doc = normalize_segmentation_document(doc, project_id=headers['X-Project-ID'],
+        image_identity=image['identity'], image_size=(image['width'], image['height']),
+        class_ids=[item['id'] for item in classes])
+    raw = export_labelme(doc, classes, 'cells.tiff')
+    raw_before = copy.deepcopy(raw)
+    path = None
+    if not folder:
+        saved = client.post(endpoint, headers=headers, json={'action': 'save', 'image': image,
+            'image_name': 'cells.tiff', 'document': doc, 'revision': None})
+        assert saved.status_code == 200, saved.get_json()
+        path = next(Path(app_module._annotation_dir()).glob('*.studio.json'))
+        saved_bytes = path.read_bytes()
+    # Delete Target, then reuse its name by renaming Other (a different class ID).
+    assert client.post('/api/classes', headers=headers, json={'classes': [classes[1]]}).status_code == 200
+    renamed = {**classes[1], 'name': classes[0]['name']}
+    assert client.post('/api/classes', headers=headers, json={'classes': [renamed]}).status_code == 200
+    before = client.get('/api/project/manifest').get_json()
+    manifest_bytes = Path(app_module._project_manifest_path()).read_bytes()
+    payload = {'action': 'load', 'image': image}
+    if folder:
+        payload.update(image_name='cells.tiff', labelme=raw)
+    response = client.post(endpoint, headers=headers, json=payload)
+    assert response.status_code == 409, response.get_json()
+    assert 'Target' in response.get_json()['error']
+    assert 'name' in response.get_json()['error']
+    assert client.get('/api/project/manifest').get_json() == before
+    assert Path(app_module._project_manifest_path()).read_bytes() == manifest_bytes
+    assert raw == raw_before
+    if path:
+        assert path.read_bytes() == saved_bytes
+    else:
+        assert not list(Path(app_module._annotation_dir()).glob('*.studio.json'))
+    # Renaming the active class back resolves the conflict without reassigning saved IDs.
+    assert client.post('/api/classes', headers=headers, json={'classes': [classes[1]]}).status_code == 200
+    loaded = client.post(endpoint, headers=headers, json=payload)
+    assert loaded.status_code == 200, loaded.get_json()
+    result = loaded.get_json()
+    assert result['document'] == doc
+    assert {item['id'] for item in result['classes']} == {retired_id, active_id}
+    exported = client.post(endpoint, headers=headers, json={'action': 'export_labelme', 'image': image,
+        'image_name': 'cells.tiff', 'document': result['document']})
+    assert exported.status_code == 200, exported.get_json()
+    assert exported.get_json()['labelme']['shapes'][0]['microscopy_studio']['class_id'] == retired_id
+
+
 def test_folder_autosave_takes_priority_without_changing_server_file(client, polygon_project, app_module):
     headers, image, doc = polygon_project
     endpoint = '/api/project/segmentation'
