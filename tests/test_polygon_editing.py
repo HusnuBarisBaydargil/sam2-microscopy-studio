@@ -739,6 +739,68 @@ const points = () => find('data-object-id',1).getAttribute('points');
     assert.equal(folderWrites.length,beforeReopenWrites);assert(el('polygonUndo').disabled);
     assert.equal(el('polygonSaveState').textContent,'Saved');
     assert.equal(el('polygonObjectList').children.length,1);
+    // Native folder files must reach the native load path, never the external importer.
+    const nativeFile=new File(['native pixels'],'native.png');
+    const nativeHash=await crypto.subtle.digest('SHA-256',await nativeFile.arrayBuffer());
+    const nativeIdentity=Array.from(new Uint8Array(nativeHash),byte=>byte.toString(16).padStart(2,'0')).join('');
+    let nativeDocument={...structuredClone(original),next_object_id:12,image:{identity:nativeIdentity,width:100,height:100},
+        review_status:'reviewed',labelme:{flags:{checked:true},custom:'keep'},annotations:[
+            {...structuredClone(original.annotations[0]),id:2,edited:true,labelme:{group_id:42,flags:{occluded:true}}},
+            {...structuredClone(original.annotations[0]),id:7,class_id:77,source:'sam2',edited:false}]};
+    const encodeNative=document=>({imagePath:'native.png',imageWidth:100,imageHeight:100,
+        ...document.labelme,microscopy_studio:{...document,annotations:undefined,labelme:undefined,labelme_keys:Object.keys(document.labelme)},
+        shapes:document.annotations.map(item=>({...item.labelme,label:'Cell',shape_type:item.geometry.type,points:item.geometry.points,
+            microscopy_studio:{id:item.id,class_id:item.class_id,source:item.source,edited:item.edited,labelme_keys:Object.keys(item.labelme||{})}}))});
+    let nativeRaw=encodeNative(nativeDocument),nativeRequests=0,nativeWrites=0;
+    const nativeBefore=structuredClone(nativeDocument),nativeImportsBefore=importCalls;
+    const previousApi=window.SAM2ApiClient;
+    window.SAM2ApiClient={async apiFetch(path,options){
+        const data=path==='api/project/segmentation'?JSON.parse(options.body):null;
+        if(data?.action==='load' && data.labelme){
+            nativeRequests++;assert.deepEqual(data.labelme,JSON.parse(JSON.stringify(nativeRaw)));
+            assert.equal(data.image_name,'native.png');assert.equal(data.restore_classes,true);
+            if(data.labelme.microscopy_studio===null)return {ok:false,json:async()=>({error:'Invalid native autosave metadata'})};
+            return {ok:true,json:async()=>({document:structuredClone(nativeDocument),revision:null,
+                classes:[{id:4,name:'Cell'},{id:8,name:'Other'},{id:9,name:'Imported'},{id:77,name:'Restored class'}]})};
+        }
+        return previousApi.apiFetch(path,options);
+    }};
+    window.SAM2ProjectFolder={has:()=>true,read:async()=>JSON.stringify(nativeRaw),write:async(file,name)=>{
+        assert.strictEqual(file,nativeFile);assert.equal(name,'native.json');nativeWrites++;
+        nativeDocument=structuredClone(exportedPayload.document);nativeRaw=encodeNative(nativeDocument);
+    }};
+    const reopenNative=()=>el('polygonFolder').onchange({target:{files:[nativeFile],value:''}});
+    await reopenNative();assert.equal(nativeRequests,1);assert.equal(importCalls,nativeImportsBefore);
+    assert.equal(nativeWrites,0);assert(el('polygonUndo').disabled);
+    assert(el('polygonClass').children.some(option=>option.value===77 || option.value==='77'));
+    assert(find('data-object-id',2));assert(find('data-object-id',7));
+    const nativePan={...event(svg,5,5),button:1};stage.onpointerdown(nativePan);
+    const nativePanEnd={...nativePan,clientX:nativePan.clientX+30,clientY:nativePan.clientY-20};
+    stage.onpointermove(nativePanEnd);stage.onpointerup(nativePanEnd);
+    assert.deepEqual(offset(),[30,-20]);assert.equal(nativeWrites,0);
+    svg.onclick(event(svg,5,5)); // Consume the click suppressed after a pan.
+    await svg.onclick(event(find('data-object-id',2),20,20));
+    await listeners.keydown({key:'Delete',target:svg,preventDefault(){}});
+    assert.equal(nativeWrites,1);assert.deepEqual(nativeDocument.annotations.map(item=>item.id),[7]);
+    assert.equal(nativeDocument.next_object_id,12);
+    await el('polygonUndo').click();assert.equal(nativeWrites,2);assert.deepEqual(nativeDocument,nativeBefore);
+    await el('polygonRedo').click();assert.equal(nativeWrites,3);assert.deepEqual(nativeDocument.annotations.map(item=>item.id),[7]);
+    await el('polygonUndo').click();
+    await reopenNative();assert.equal(nativeRequests,2);assert.equal(nativeWrites,4);assert(el('polygonUndo').disabled);
+    el('polygonDraw').click();svg.onclick(event(svg,5,5));svg.onclick(event(svg,20,5));svg.onclick(event(svg,20,20));
+    await el('polygonFinish').click();assert.equal(nativeWrites,5);
+    assert.deepEqual(nativeDocument.annotations.map(item=>item.id),[2,7,12]);assert.equal(nativeDocument.next_object_id,13);
+    assert.deepEqual(nativeDocument.annotations.slice(0,2),nativeBefore.annotations);
+    await el('polygonUndo').click();assert.equal(nativeDocument.next_object_id,13);
+    await reopenNative();assert.equal(nativeRequests,3);assert.equal(nativeDocument.next_object_id,13);
+    assert.deepEqual(nativeDocument.annotations,nativeBefore.annotations);assert.equal(importCalls,nativeImportsBefore);
+    const beforeInvalidNativeWrites=nativeWrites;
+    nativeRaw.microscopy_studio=null;await reopenNative();
+    assert(el('polygonStatus').textContent.includes('Invalid native autosave'));
+    assert(el('polygonReviewNext').disabled);assert.equal(nativeWrites,beforeInvalidNativeWrites);
+    assert.equal(importCalls,nativeImportsBefore);
+    nativeRaw=encodeNative(nativeDocument);await reopenNative();assert.equal(el('polygonReviewState').textContent,'Reviewed');
+    window.SAM2ApiClient=previousApi;
     // Review is an explicit saved decision, independent of autosave. Reopening
     // a folder restores its queue, including reviewed images not yet visited.
     const reviewFiles=['a.png','b.png','c.png'].map(name=>new File([name],name));

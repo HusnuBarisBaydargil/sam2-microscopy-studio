@@ -5,7 +5,97 @@ from pathlib import Path
 import pytest
 from test_polygon_api import polygon_project as _polygon_project
 
+from labelme_io import export_labelme
+from segmentation_io import normalize_segmentation_document
+
 polygon_project = _polygon_project
+
+
+@pytest.mark.parametrize('empty', [False, True])
+def test_folder_autosave_reopen_preserves_ids_and_metadata(client, polygon_project, app_module, empty):
+    headers, image, doc = polygon_project
+    classes = client.get('/api/classes').get_json()['classes']
+    doc['next_object_id'] = 12
+    first = {**doc['annotations'][0], 'id': 2, 'source': 'manual', 'edited': True,
+             'labelme': {'group_id': 42, 'flags': {'occluded': True}, 'description': 'keep', 'custom': [1, 2]}}
+    second = {**copy.deepcopy(first), 'id': 7, 'source': 'sam2', 'edited': False}
+    doc['annotations'] = [] if empty else [first, second]
+    doc['labelme'] = {'flags': {'checked': True}, 'custom': {'owner': 'fixture'}}
+    doc['review_status'] = 'confirmed_empty' if empty else 'reviewed'
+    expected = normalize_segmentation_document(doc, project_id=headers['X-Project-ID'],
+        image_identity=image['identity'], image_size=(image['width'], image['height']),
+        class_ids=[item['id'] for item in classes])
+    raw = export_labelme(expected, classes, 'cells.tiff')
+    endpoint = '/api/project/segmentation'
+    # Folder saves do not populate the server annotation store. Its counter starts at one.
+    assert client.post(endpoint, headers=headers, json={'action': 'load', 'image': image}).get_json()['document']['next_object_id'] == 1
+    for _ in range(2):
+        loaded = client.post(endpoint, headers=headers, json={'action': 'load', 'image': image,
+            'image_name': 'cells.tiff', 'labelme': raw})
+        assert loaded.status_code == 200, loaded.get_json()
+        assert loaded.get_json()['document'] == expected
+        assert loaded.get_json()['revision'] is None
+        assert loaded.get_json()['classes'] == classes
+        raw = export_labelme(loaded.get_json()['document'], classes, 'cells.tiff')
+    assert not list(Path(app_module._annotation_dir()).glob('*.studio.json'))
+
+
+@pytest.mark.parametrize('invalid', ['project', 'image', 'filename', 'dimensions', 'counter', 'ids', 'class', 'metadata'])
+def test_invalid_folder_autosave_is_not_imported_or_saved(client, polygon_project, app_module, invalid):
+    headers, image, doc = polygon_project
+    classes = client.get('/api/classes').get_json()['classes']
+    raw = export_labelme({**doc, 'annotations': [{**doc['annotations'][0], 'source': 'manual', 'edited': True}]}, classes, 'cells.tiff')
+    if invalid == 'project':
+        raw['microscopy_studio']['project_id'] = '00000000-0000-0000-0000-000000000001'
+    elif invalid == 'image':
+        raw['microscopy_studio']['image']['identity'] = 'b' * 64
+    elif invalid == 'filename':
+        raw['imagePath'] = 'other.tiff'
+    elif invalid == 'dimensions':
+        raw['imageWidth'] += 1
+    elif invalid == 'counter':
+        raw['microscopy_studio']['next_object_id'] = 1
+    elif invalid == 'ids':
+        raw['shapes'][0]['microscopy_studio']['id'] = 0
+    elif invalid == 'class':
+        raw['shapes'][0]['microscopy_studio']['class_id'] = 999
+    else:
+        raw['microscopy_studio'] = None
+    response = client.post('/api/project/segmentation', headers=headers, json={
+        'action': 'load', 'image': image, 'image_name': 'cells.tiff', 'labelme': raw})
+    assert response.status_code == 400, response.get_json()
+    assert client.get('/api/classes').get_json()['classes'] == classes
+    assert not list(Path(app_module._annotation_dir()).glob('*.studio.json'))
+
+
+def test_folder_autosave_restores_retired_class_with_original_id(client, polygon_project):
+    headers, image, doc = polygon_project
+    classes = client.get('/api/classes').get_json()['classes']
+    raw = export_labelme({**doc, 'annotations': [{**doc['annotations'][0], 'source': 'sam2', 'edited': True}]}, classes, 'cells.tiff')
+    assert client.post('/api/classes', headers=headers, json={'classes': []}).status_code == 200
+    response = client.post('/api/project/segmentation', headers=headers, json={
+        'action': 'load', 'image': image, 'image_name': 'cells.tiff', 'labelme': raw})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['classes'] == classes
+    assert response.get_json()['document']['annotations'][0]['class_id'] == classes[0]['id']
+
+
+def test_folder_autosave_takes_priority_without_changing_server_file(client, polygon_project, app_module):
+    headers, image, doc = polygon_project
+    endpoint = '/api/project/segmentation'
+    stored = client.post(endpoint, headers=headers, json={'action': 'save', 'image': image,
+        'document': {**doc, 'next_object_id': 100}, 'revision': None}).get_json()
+    path = next(Path(app_module._annotation_dir()).glob('*.studio.json'))
+    before = path.read_bytes()
+    classes = client.get('/api/classes').get_json()['classes']
+    local = {**stored['document'], 'next_object_id': 12,
+             'annotations': [{**stored['document']['annotations'][0], 'id': 7, 'source': 'sam2', 'edited': True}]}
+    response = client.post(endpoint, headers=headers, json={'action': 'load', 'image': image,
+        'image_name': 'cells.tiff', 'labelme': export_labelme(local, classes, 'cells.tiff')})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['document'] == local
+    assert response.get_json()['revision'] == stored['revision']
+    assert path.read_bytes() == before
 
 
 def labelme(image):

@@ -883,16 +883,24 @@
                 if (!response.ok) throw new Error(decoded.error || 'Could not decode image.');
                 if (disposed) return;
                 const image = { identity, width: decoded.width, height: decoded.height };
-                let localAnnotation = null;
+                let localAnnotation = null, localAutosave = null;
                 if (window.SAM2ProjectFolder?.has(file)) {
                     localAnnotation = await window.SAM2ProjectFolder.read(file, file.name.replace(/\.[^.]+$/, '') + '.json');
+                    if (localAnnotation !== null) {
+                        folderLoadFailed = true;
+                        if (new Blob([localAnnotation]).size > 20 * 1024 * 1024) throw new Error('Annotation JSON exceeds the 20 MB import limit. Save from Labelme without embedded image data.');
+                        const raw = JSON.parse(localAnnotation);
+                        if (raw && Object.prototype.hasOwnProperty.call(raw, 'microscopy_studio')) localAutosave = raw;
+                    }
                 }
                 const loaded = await request('api/project/segmentation', {
-                    action: 'load', image, restore_classes: localAnnotation === null,
+                    action: 'load', image, restore_classes: localAnnotation === null || localAutosave !== null,
+                    ...(localAutosave !== null ? { labelme: localAutosave, image_name: file.name } : {}),
                 });
-                if (Array.isArray(loaded.classes)) classes = loaded.classes;
+                if (disposed) return;
+                if (Array.isArray(loaded.classes)) { classes = loaded.classes; renderClasses(); }
                 // The file beside the image is authoritative, including an empty annotation.
-                if (localAnnotation !== null) loaded.document = { schema_version: 1, task_type: 'instance_segmentation',
+                if (localAnnotation !== null && localAutosave === null) loaded.document = { schema_version: 1, task_type: 'instance_segmentation',
                     project_id: loaded.document.project_id, image, next_object_id: loaded.document.next_object_id, annotations: [] };
                 if (disposed) return;
                 state = createPolygonState(loaded.document);
@@ -922,10 +930,10 @@
                 resetPan(); zoom = 100; fitZoom(); svg.parentElement.scrollLeft = 0; svg.parentElement.scrollTop = 0; byId('ZoomLabel').textContent = '100%';
                 message('Recovered an earlier backup. Check the objects before continuing.', Boolean(loaded.recovered));
                 // A saved empty document is still deliberate work; never replace it on reopen.
-                if (localAnnotation !== null) {
+                if (localAnnotation !== null && localAutosave === null) {
                     folderLoadFailed = true;
                     await importLabelme(new File([localAnnotation], file.name.replace(/\.[^.]+$/, '') + '.json'), false, false);
-                } else if (loaded.revision == null && folderAnnotations.has(file)) {
+                } else if (localAnnotation === null && loaded.revision == null && folderAnnotations.has(file)) {
                     const annotation = folderAnnotations.get(file);
                     if (annotation === null) message('Multiple files share this name. Import the correct Labelme JSON from Files & annotations.', true);
                     else await importLabelme(annotation, false);
