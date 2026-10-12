@@ -1296,8 +1296,15 @@
                 const nextClasses = classes.filter(item => item.id !== classChange.id);
                 if (classChange.item) nextClasses.splice(classChange.index, 0, classChange.item);
                 try {
-                    const result = await request('api/classes', { classes: nextClasses });
+                    if (classChange.item && classes.some(item => item.id !== classChange.id && item.name === classChange.item.name)) {
+                        throw new Error(`Cannot restore class "${classChange.item.name}": another class uses that name. Rename the conflicting class and retry Undo.`);
+                    }
+                    const result = await request('api/classes', { classes: nextClasses,
+                        ...(classChange.item ? { restore_class_id: classChange.id } : {}) });
                     if (disposed) return;
+                    if (classChange.item && !result.classes.some(item => item.id === classChange.id)) {
+                        throw new Error('The original class ID could not be restored. Resolve the class-name conflict and retry Undo.');
+                    }
                     classes = result.classes;
                 } catch (error) {
                     state[direction === 'undo' ? 'redo' : 'undo'](nextClasses);

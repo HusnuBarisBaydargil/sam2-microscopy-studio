@@ -565,7 +565,18 @@ def load_classes_endpoint():
     data = request.get_json(silent=True) or {}
     try:
         classes = _normalize_classes(data.get("classes", []))
-        classes = _save_project_classes(classes)
+        if "restore_class_id" in data:
+            restore_id = data["restore_class_id"]
+            if type(restore_id) is not int or restore_id < 1:
+                return jsonify({"error": "restore_class_id must be a positive integer"}), 400
+            # Validate the restoration before writing; name normalization can drop or remap an ID.
+            manifest = update_manifest_classes(_project_manifest(), classes)
+            if restore_id not in {item["id"] for item in manifest["classes"]}:
+                return jsonify({"error": "The original class ID could not be restored. "
+                                "Resolve the class-name conflict and retry Undo."}), 409
+            classes = _save_manifest(manifest)["classes"]
+        else:
+            classes = _save_project_classes(classes)
         return jsonify({
             "classes": classes,
             "next_class_id": _project_manifest()["next_class_id"],
