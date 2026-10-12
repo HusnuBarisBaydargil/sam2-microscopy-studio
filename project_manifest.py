@@ -2,13 +2,27 @@ import json
 import os
 import uuid
 
-from annotation_io import _normalize_classes
+from annotation_io import _normalize_classes, generate_class_color
 from atomic_io import atomic_write_file, read_with_backup, recoverable_file_exists
 from project_config import normalize_project_settings
 
 PROJECT_MANIFEST_SCHEMA_VERSION = 1
 PROJECT_TASK_BOUNDING_BOX = "bounding_box"
-SUPPORTED_PROJECT_TASKS = {PROJECT_TASK_BOUNDING_BOX}
+PROJECT_TASK_INSTANCE_SEGMENTATION = "instance_segmentation"
+SUPPORTED_PROJECT_TASKS = {PROJECT_TASK_BOUNDING_BOX, PROJECT_TASK_INSTANCE_SEGMENTATION}
+
+
+def _normalize_segmentation_class_controls(classes):
+    reserved = {item["color"].lower() for item in classes}
+    seen = set()
+    for index, item in enumerate(classes):
+        # Old segmentation shortcuts must not compete with drawing tools.
+        if item.get("hotkey") in ("1", "2", "3"):
+            item["hotkey"] = ""
+        if item["color"].lower() in seen:
+            item["color"] = generate_class_color(index, reserved)
+            reserved.add(item["color"].lower())
+        seen.add(item["color"].lower())
 
 
 def project_manifest_path(project_root, project_manifest_file):
@@ -90,6 +104,13 @@ def normalize_project_manifest(
         raw_manifest.get("classes"),
         raw_manifest.get("next_class_id", 1),
     )
+    retired_classes, next_class_id = normalize_manifest_classes(
+        raw_manifest.get("retired_classes", []), next_class_id,
+    )
+    active_ids = {item["id"] for item in classes}
+    retired_classes = [item for item in retired_classes if item["id"] not in active_ids]
+    if task_type == PROJECT_TASK_INSTANCE_SEGMENTATION:
+        _normalize_segmentation_class_controls(classes)
     return {
         "schema_version": PROJECT_MANIFEST_SCHEMA_VERSION,
         "project_id": project_id,
@@ -98,6 +119,7 @@ def normalize_project_manifest(
         "next_class_id": next_class_id,
         "settings": settings,
         "classes": classes,
+        **({"retired_classes": retired_classes} if retired_classes else {}),
     }
 
 
@@ -105,6 +127,7 @@ def create_project_manifest(
     settings=None,
     classes=None,
     *,
+    task_type=PROJECT_TASK_BOUNDING_BOX,
     project_root,
     default_annotation_output_dir,
     allow_absolute_annotation_dir,
@@ -113,7 +136,7 @@ def create_project_manifest(
         {
             "schema_version": PROJECT_MANIFEST_SCHEMA_VERSION,
             "project_id": str(uuid.uuid4()),
-            "task_type": PROJECT_TASK_BOUNDING_BOX,
+            "task_type": task_type,
             "settings": settings or {},
             "classes": classes or [],
         },
@@ -225,6 +248,7 @@ def update_manifest_classes(manifest, raw_classes):
     current_classes = manifest.get("classes", [])
     current_by_id = {class_info["id"]: class_info for class_info in current_classes}
     current_by_name = {class_info["name"]: class_info for class_info in current_classes}
+    retired_by_id = {item["id"]: item for item in manifest.get("retired_classes", [])}
     normalized_input = _normalize_classes(raw_classes)
     used_ids = set()
     next_class_id = _valid_class_id(manifest.get("next_class_id")) or 1
@@ -233,17 +257,29 @@ def update_manifest_classes(manifest, raw_classes):
     for class_info in normalized_input:
         requested_id = _valid_class_id(class_info.get("id"))
         existing = current_by_id.get(requested_id) or current_by_name.get(class_info["name"])
+        retired = retired_by_id.get(requested_id) or next(
+            (item for item in retired_by_id.values() if item["name"] == class_info["name"]), None,
+        )
+        if existing is None and retired and retired["name"] == class_info["name"]:
+            existing = retired
         if existing and existing["id"] not in used_ids:
             class_id = existing["id"]
         else:
-            class_id = _next_available_class_id(used_ids | set(current_by_id), next_class_id)
+            class_id = _next_available_class_id(used_ids | set(current_by_id) | set(retired_by_id), next_class_id)
             next_class_id = class_id + 1
         used_ids.add(class_id)
         next_class_id = max(next_class_id, class_id + 1)
         classes.append({"id": class_id, **{key: value for key, value in class_info.items() if key != "id"}})
 
-    return {
-        **manifest,
-        "next_class_id": next_class_id,
-        "classes": classes,
-    }
+    if manifest.get("task_type") == PROJECT_TASK_INSTANCE_SEGMENTATION:
+        _normalize_segmentation_class_controls(classes)
+    # Retain definitions for annotations in other images and for Undo. These
+    # classes are absent from the active palette; their IDs are never recycled.
+    retired_by_id.update({item["id"]: item for item in current_classes if item["id"] not in used_ids})
+    result = {**manifest, "next_class_id": next_class_id, "classes": classes}
+    retired_classes = [item for key, item in retired_by_id.items() if key not in used_ids]
+    if retired_classes:
+        result["retired_classes"] = retired_classes
+    else:
+        result.pop("retired_classes", None)
+    return result

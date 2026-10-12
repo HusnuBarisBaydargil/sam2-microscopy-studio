@@ -13,6 +13,11 @@ let classes=[];for(let i=0;i<40;i++)classes.push(manager.buildNewClass('Backgrou
 assert(classes.every(c=>!['b','u'].includes(c.hotkey)));
 assert.equal(new Set(classes.map(c=>c.hotkey).filter(Boolean)).size,34);
 assert.equal(manager.isReservedHotkey('B'),true);assert.equal(manager.isReservedHotkey('u'),true);
+const reserved=['b','u','1','2','3'];
+let segmentation=[];for(let i=0;i<40;i++)segmentation.push(manager.buildNewClass('123 Cell '+i,segmentation,1,reserved));
+assert(segmentation.every(c=>!reserved.includes(c.hotkey)));
+assert.equal(new Set(segmentation.map(c=>c.hotkey).filter(Boolean)).size,31);
+assert(manager.isReservedHotkey('2',reserved));assert(!manager.isReservedHotkey('2'));
 const legacy=manager.normalizeClassList([{id:7,name:'Saved',color:'#abcdef',hotkey:'b'}]);
 assert.equal(legacy[0].id,7);assert.equal(legacy[0].hotkey,'b');assert(manager.isReservedHotkey(legacy[0].hotkey));
 const source=fs.readFileSync('static/script-refined.js','utf8');

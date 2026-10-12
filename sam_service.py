@@ -1,3 +1,4 @@
+import hashlib
 import os
 import threading
 
@@ -8,6 +9,8 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+from sam_polygons import geometry_mask, mask_contour
 
 DEFAULT_SAM_DEVICE = os.environ.get("SAM_DEVICE", "auto").strip().lower() or "auto"
 SUPPORTED_SAM_DEVICES = {"auto", "cuda", "cpu"}
@@ -276,6 +279,8 @@ def normalize_sam_device(value=None):
 class SAMModelHandler:
     def __init__(self, cfg_path, checkpoint_path, requested_device=None, skip_model_load=False, display_path=str):
         self.model = None
+        self._prompt_predictor = None
+        self._prompt_key = None
         self.cfg_path = cfg_path
         self.checkpoint_path = checkpoint_path
         self.requested_device = normalize_sam_device(requested_device)
@@ -304,6 +309,8 @@ class SAMModelHandler:
     def _initialize_model(self):
         with self._lock:
             self.model = None
+            self._prompt_predictor = None
+            self._prompt_key = None
             self.last_error = None
             try:
                 self.device = self._resolve_device(self.requested_device)
@@ -370,6 +377,54 @@ class SAMModelHandler:
     def is_ready(self):
         return self.model is not None
 
+    def predict_points(self, image_np, points, project_id, split_geometry=None):
+        # Keep only one image embedding. Serialize access with automatic inference
+        # and model/device changes; prompts themselves are never cached.
+        with self._lock, torch.inference_mode():
+            if not self.is_ready():
+                raise RuntimeError("SAM2 model is not initialized.")
+            key = (project_id, id(self.model), image_np.shape, hashlib.sha256(image_np.tobytes()).digest())
+            if self._prompt_predictor is None or self._prompt_predictor.model is not self.model:
+                self._prompt_predictor = SAM2ImagePredictor(self.model)
+            if self._prompt_key != key:
+                self._prompt_key = None
+                self._prompt_predictor.set_image(image_np)
+                self._prompt_key = key
+            if split_geometry is not None:
+                height, width = image_np.shape[:2]
+                parent = geometry_mask(split_geometry, width, height)
+                pixels = [(int(point[0]), int(point[1])) for point in points]
+                if (not 2 <= len(points) <= 16 or any(point[2] != 1 for point in points)
+                        or len(set(pixels)) != len(pixels)
+                        or any(not parent[y, x] for x, y in pixels)):
+                    raise ValueError("Split needs 2–16 distinct include clicks inside the selected object.")
+                # Competing logits allocate overlapping predictions to one cell;
+                # background and pixels outside the original clump stay excluded.
+                best = np.zeros((height, width), dtype=np.float32)
+                owner = np.full((height, width), -1, dtype=np.int16)
+                for index in range(len(points)):
+                    logits, _, _ = self._prompt_predictor.predict(
+                        point_coords=np.asarray([point[:2] for point in points], dtype=np.float32),
+                        point_labels=np.asarray([int(i == index) for i in range(len(points))], dtype=np.int32),
+                        multimask_output=False, return_logits=True,
+                    )
+                    take = (logits[0] > best) & (parent != 0)
+                    best[take] = logits[0][take]
+                    owner[take] = index
+                if any(owner[y, x] != index for index, (x, y) in enumerate(pixels)):
+                    raise ValueError("SAM2 could not separate every clicked cell. Undo or reposition a click.")
+                return [mask_contour(owner == index) for index in range(len(points))]
+            masks, scores, _ = self._prompt_predictor.predict(
+                point_coords=np.asarray([point[:2] for point in points], dtype=np.float32),
+                point_labels=np.asarray([point[2] for point in points], dtype=np.int32),
+                multimask_output=len(points) == 1,
+            )
+            mask = np.asarray(masks[int(np.argmax(scores))], dtype=np.uint8)
+            contours, _ = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+            if len(contours) != 1:
+                return [{"polygon_supported": False}]
+            return [{"polygon_supported": True, "contour": contours[0].reshape(-1, 2).tolist()}]
+
     def generate_masks(self, image_np, sam_settings):
         with self._lock:
             if not self.is_ready():
@@ -396,10 +451,11 @@ class SAMModelHandler:
         for mask_data in raw_masks:
             if not (min_area <= mask_data["area"] <= max_area):
                 continue
-            contours, _ = cv2.findContours(mask_data["segmentation"].astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, hierarchy = cv2.findContours(mask_data["segmentation"].astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
             if not contours:
                 continue
-            largest_contour = max(contours, key=cv2.contourArea)
+            external = [contour for index, contour in enumerate(contours) if hierarchy[0][index][3] == -1]
+            largest_contour = max(external, key=cv2.contourArea)
             contour_points = largest_contour.reshape(-1, 2).tolist()
             bounding_box = cv2.boundingRect(largest_contour)
             filtered_masks.append({
@@ -407,6 +463,7 @@ class SAMModelHandler:
                 "bbox": list(bounding_box),
                 "mask_area": int(mask_data.get("area", 0)),
                 "source": "sam2",
+                "polygon_supported": len(contours) == 1,
                 "predicted_iou": float(mask_data["predicted_iou"]) if "predicted_iou" in mask_data else None,
                 "stability_score": float(mask_data["stability_score"]) if "stability_score" in mask_data else None,
             })

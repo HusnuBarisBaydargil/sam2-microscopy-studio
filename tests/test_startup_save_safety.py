@@ -42,17 +42,18 @@ const body=source.match(/    async function initializeApp\(\) \{([\s\S]*?)\n    
 const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 (async()=>{
 for(const failure of ['manifest','settings','classes',null]){
-const workspace={inert:false},button={disabled:true},label={};let message='',finish;
+const workspace={inert:false},button={disabled:true},label={};let message='',finish,resumed=null;
 const bindings={document:{querySelector:()=>workspace,getElementById:id=>id==='manageProjectsBtn'?button:label},
 window:{SAM2ApiClient:{apiFetch:()=>new Promise(r=>finish=r),setProjectId:()=>{}}},
 renderSamSettingsPanel:()=>{},syncPreprocessSettingsInputs:()=>{},resetState:()=>{},renderClassControls:()=>{},
 loadProjectSettings:async()=>failure!=='settings',loadProjectClasses:async()=>failure!=='classes',
-resizeCanvasToContainer:()=>{},draw:()=>{},updateButtonStates:()=>{},updateStatus:m=>message=m};
+resizeCanvasToContainer:()=>{},draw:()=>{},updateButtonStates:()=>{},initializeProjectChooser:()=>{},resumeProjectWorkspace:p=>resumed=p,updateStatus:m=>message=m};
 const init=new AsyncFunction(...Object.keys(bindings),body);
 const pending=init(...Object.values(bindings));assert(workspace.inert);assert(button.disabled);
 finish({ok:failure!=='manifest',json:async()=>({project_id:'project',name:'Project'})});await pending;
 assert.equal(workspace.inert,Boolean(failure));assert.equal(button.disabled,Boolean(failure));
 if(failure)assert(message.includes('editing is disabled'));else assert.equal(label.textContent,'Project');
+assert.equal(resumed?.project_id,failure?undefined:'project');
 }
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """], cwd=Path(__file__).resolve().parents[1], check=True)

@@ -280,6 +280,41 @@ document.addEventListener('DOMContentLoaded', () => {
     const projectStatus = document.getElementById('projectDialogStatus');
     const projectSelect = document.getElementById('savedProjectSelect');
     let projectSwitchPending = false;
+    let polygonEditor = null;
+    let projectWorkspace = null, resumePending = false;
+    function showResumeState(text, locate = false) {
+        document.getElementById('projectResumeBar').hidden = false;
+        document.getElementById('projectResumeText').textContent = text;
+        document.getElementById('resumeProjectFolder').textContent = locate ? 'Locate folder' : 'Reconnect folder';
+    }
+    async function resumeProjectWorkspace(project, requestAccess = false) {
+        if (resumePending || projectSwitchPending || appState.images.length || polygonEditor?.hasImages()) return;
+        if (!window.SAM2ProjectFolder?.restore) return;
+        resumePending = true;
+        const button = document.getElementById('resumeProjectFolder');
+        button.disabled = true;
+        try {
+            const saved = requestAccess && projectWorkspace?.status === 'missing'
+                ? { ...projectWorkspace, files: await window.SAM2ProjectFolder.open(), status: 'ready' }
+                : await window.SAM2ProjectFolder.restore(project.project_id, requestAccess);
+            if (projectSwitchPending || appState.images.length || polygonEditor?.hasImages()) return;
+            projectWorkspace = saved;
+            if (saved.status === 'none' || saved.status === 'cancelled') return;
+            if (saved.status !== 'ready') {
+                showResumeState(saved.status === 'permission' ? 'Folder disconnected' : 'Folder unavailable', saved.status === 'missing');
+                return;
+            }
+            const opened = polygonEditor ? await polygonEditor.resume(saved) : await resumeDetectionWorkspace(saved);
+            if (opened) document.getElementById('projectResumeBar').hidden = true;
+            else { projectWorkspace.status = 'missing'; showResumeState('Folder needs attention', true); }
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                if (projectWorkspace) projectWorkspace.status = 'missing';
+                showResumeState('Folder unavailable', true); updateStatus(error.message);
+            }
+        } finally { resumePending = false; button.disabled = false; }
+    }
+    document.getElementById('resumeProjectFolder').addEventListener('click', () => resumeProjectWorkspace({ project_id: appState.projectSettings.projectId }, true));
     async function projectRequest(payload) {
         const response = await window.SAM2ApiClient.apiFetch('api/project/projects', payload ? {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -288,9 +323,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!response.ok) throw new Error(data.error || 'Could not access projects');
         return data;
     }
-    document.getElementById('manageProjectsBtn').addEventListener('click', async () => {
+    async function showProjectChooser(mode = 'all') {
+        if (projectDialog.open) return;
+        document.getElementById('projectChooserHeading').textContent = mode === 'new' ? 'New project' : mode === 'open' ? 'Open project' : 'Choose your project';
+        document.getElementById('projectOpenSection').hidden = mode === 'new';
+        document.getElementById('projectNewSection').hidden = mode === 'open';
         projectStatus.textContent = 'Loading projects…';
         projectDialog.showModal();
+        projectSelect.replaceChildren();
+        document.getElementById('openProjectBtn').disabled = true;
         document.getElementById('reuseProjectClasses').checked = false;
         try {
             const data = await projectRequest();
@@ -298,19 +339,53 @@ document.addEventListener('DOMContentLoaded', () => {
             data.projects.forEach(project => {
                 const option = document.createElement('option');
                 option.value = project.project_id;
-                option.textContent = `${project.name} (${project.class_count} classes) · ${project.project_id.slice(0, 8)}`;
+                const type = project.task_type === 'instance_segmentation' ? 'Segmentation' : 'Detection';
+                option.textContent = `${project.name} · ${type} · ${project.class_count} classes · ${project.project_id.slice(0, 8)}`;
                 option.selected = project.project_id === data.active_project_id;
                 projectSelect.appendChild(option);
             });
+            document.getElementById('openProjectBtn').disabled = !data.projects.length;
             projectStatus.textContent = '';
         } catch (error) { projectStatus.textContent = error.message; }
-    });
+    }
+    document.getElementById('manageProjectsBtn').addEventListener('click', () => showProjectChooser());
+    document.getElementById('segmentationProjectsBtn').addEventListener('click', () => showProjectChooser('open'));
+    document.getElementById('segmentationNewProjectBtn').addEventListener('click', () => showProjectChooser('new'));
+
+    function rememberProject(projectId) {
+        try { window.sessionStorage.setItem('microscopyStudioProject', projectId); } catch { /* Storage can be disabled. */ }
+        try { window.localStorage.setItem('microscopyStudioProject', projectId); } catch { /* Session storage still avoids repeated chooser prompts. */ }
+    }
+
+    function initializeProjectChooser(project) {
+        const segmentation = project.task_type === 'instance_segmentation';
+        document.getElementById('activeProjectMode').textContent = segmentation ? 'Segmentation' : 'Detection';
+        document.getElementById('segmentationProjectNotice').hidden = !segmentation;
+        document.getElementById('segmentationProjectHeading').textContent = project.name;
+        document.querySelector('.app-container').classList.toggle('segmentation-project', segmentation);
+        if (segmentation && !polygonEditor) {
+            polygonEditor = window.SAM2PolygonEditor.mount(project, { phiSafeMode: phiSafeMode() });
+        }
+        for (const selector of ['#projectPanel', '.main-content', '#annotationPanel', '.top-load-actions', '.top-save-actions', '.workspace-footer']) {
+            document.querySelector(selector).inert = segmentation;
+        }
+        let previous = null;
+        try { previous = window.sessionStorage.getItem('microscopyStudioProject'); } catch { /* Try persistent storage next. */ }
+        if (!previous) {
+            try { previous = window.localStorage.getItem('microscopyStudioProject'); } catch { /* Show chooser when storage is unavailable. */ }
+        }
+        if (previous !== project.project_id) {
+            rememberProject(project.project_id);
+            showProjectChooser();
+        }
+    }
     document.getElementById('closeProjectDialogBtn').addEventListener('click', () => {
         if (!projectSwitchPending) projectDialog.close();
     });
     projectDialog.addEventListener('cancel', event => { if (projectSwitchPending) event.preventDefault(); });
     async function switchProject(payload) {
         if (projectSwitchPending) return;
+        if (polygonEditor && !polygonEditor.canLeave()) return;
         if (annotationSavePending || annotationDirectoryChangePending) {
             projectStatus.textContent = 'Wait for the current save or folder change to finish.';
             return;
@@ -320,8 +395,10 @@ document.addEventListener('DOMContentLoaded', () => {
         projectStatus.textContent = 'Saving classes and opening project…';
         try {
             if (classSaveTimer) { clearTimeout(classSaveTimer); classSaveTimer = null; }
-            if (!await saveProjectClasses()) throw new Error('Classes could not be saved; project switch cancelled.');
-            await projectRequest(payload);
+            if (!polygonEditor && !await saveProjectClasses()) throw new Error('Classes could not be saved; project switch cancelled.');
+            const project = await projectRequest(payload);
+            rememberProject(project.project_id);
+            if (polygonEditor) polygonEditor.dispose();
             window.removeEventListener('beforeunload', handleBeforeUnload);
             window.location.reload();
         } catch (error) {
@@ -332,7 +409,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('createProjectBtn').addEventListener('click', () => {
         const name = document.getElementById('newProjectName').value.trim();
         if (!name) { projectStatus.textContent = 'Enter a project name.'; return; }
-        switchProject({ action: 'new', name, reuse_classes: document.getElementById('reuseProjectClasses').checked });
+        const choice = document.querySelector('input[name="projectTaskType"]:checked');
+        if (!choice) { projectStatus.textContent = 'Choose Detect objects or Outline objects.'; return; }
+        switchProject({ action: 'new', name, task_type: choice.value, reuse_classes: document.getElementById('reuseProjectClasses').checked });
     });
     document.getElementById('openProjectBtn').addEventListener('click', () => {
         if (projectSelect.value) switchProject({ action: 'open', project_id: projectSelect.value });
@@ -372,6 +451,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- EVENT LISTENERS ---
     loadImageInput.addEventListener('change', handleImageLoad);
     openFolderInput.addEventListener('change', handleFolderLoad);
+    openFolderInput.addEventListener('click', async event => {
+        event.preventDefault();
+        if (annotationSavePending || annotationDirectoryChangePending) return;
+        try {
+            const files = await window.SAM2ProjectFolder.open();
+            await handleFolderLoad({ target: { files, value: '' } });
+        } catch (error) { if (error.name !== 'AbortError') showToast(error.message, 'error'); }
+    });
     runSamBtn.addEventListener('click', handleRunSam);
     clearCandidatesBtn.addEventListener('click', handleClearCandidates);
     openSamSettingsBtn.addEventListener('click', openSamSettingsModal);
@@ -531,6 +618,10 @@ document.addEventListener('DOMContentLoaded', () => {
         event.target.value = '';
         if (!file) return;
         if (!confirmDiscardUnsavedChanges('Loading a new image will clear the current project state.')) return;
+        if (window.SAM2ProjectFolder) {
+            try { await window.SAM2ProjectFolder.attach([file]); }
+            catch (error) { if (error.name !== 'AbortError') showToast(error.message, 'error'); return; }
+        }
 
         resetState();
         const imageRecord = createImageRecord(file);
@@ -570,6 +661,44 @@ document.addEventListener('DOMContentLoaded', () => {
         const msg = `Opened folder with ${files.length} images.`;
         updateStatus(msg);
         showToast(msg, 'success');
+    }
+    async function resumeDetectionWorkspace(saved) {
+        const files = saved.files.filter(isSupportedImageFile).sort((a, b) => imageSortName(a).localeCompare(imageSortName(b), undefined, { numeric: true }));
+        if (!files.length) return false;
+        const last = files.findIndex(file => window.SAM2ProjectFolder.imagePath(file) === saved.lastPath);
+        const index = Math.max(0, last);
+        const hash = await crypto.subtle.digest('SHA-256', await files[index].arrayBuffer());
+        const identity = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+        if (last >= 0 && saved.identity && identity !== saved.identity) throw new Error('The saved image changed. Open the folder to review its current contents.');
+        if (appState.images.length || projectSwitchPending) return false;
+        resetState();
+        appState.images = files.map((file, position) => createImageRecord(file, null, position));
+        appState.images.forEach(imageRecord => initializeImageState(imageRecord.id));
+        const isCurrent = stateStore.beginOperation(appState, 'open-project');
+        appState.imageQueueFilter = imageController.normalizeQueueFilter(saved.filter);
+        renderImageBrowser();
+        await refreshAnnotationMatches({ showFeedback: false });
+        if (!isCurrent()) return false;
+        await selectImageByIndex(index, { autoLoadAnnotations: true });
+        if (last < 0) showToast('The last image is no longer in this folder. Opened the first available image.', 'info');
+        return isCurrent() && appState.currentImage === appState.images[index];
+    }
+    async function rememberDetectionWorkspace(imageRecord = appState.currentImage) {
+        if (!imageRecord || !window.SAM2ProjectFolder?.remember || !window.SAM2ProjectFolder.has(imageRecord.file)) return;
+        const isCurrent = stateStore.beginOperation(appState, 'workspace-bookmark');
+        const projectId = appState.projectSettings.projectId;
+        const files = appState.images.map(item => item.file), filter = appState.imageQueueFilter;
+        try {
+            if (!imageRecord.contentIdentity) {
+                const hash = await crypto.subtle.digest('SHA-256', await imageRecord.file.arrayBuffer());
+                imageRecord.contentIdentity = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+            }
+            if (!isCurrent() || projectSwitchPending || appState.projectSettings.projectId !== projectId || appState.currentImage !== imageRecord) return;
+            await window.SAM2ProjectFolder.remember(projectId, files, imageRecord.file, { identity: imageRecord.contentIdentity, filter });
+            if (isCurrent()) document.getElementById('projectResumeBar').hidden = true;
+        } catch {
+            // Bookmark failure must not interrupt annotation loading or folder autosave.
+        }
     }
 
     async function loadImageRecord(imageRecord) {
@@ -625,6 +754,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         appState.currentImage = imageRecord;
         initializeImageState(imageRecord.id);
+        if (ensureClassesForAnnotations(currentAnnotations()) > 0) scheduleProjectClassesSave();
         resetInteractionState();
 
         updateCurrentImageDisplay();
@@ -646,6 +776,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const msg = `Loaded '${publicImageName(imageRecord)}'. Ready to process.`;
             updateStatus(msg);
         }
+        void rememberDetectionWorkspace(imageRecord);
     }
 
     function handleImageListClick(event) {
@@ -667,6 +798,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         appState.imageQueueFilter = nextFilter;
         renderImageBrowser();
+        void rememberDetectionWorkspace();
     }
 
     function renderImageBrowser() {
@@ -1053,6 +1185,7 @@ ${badgeInfo.title}`;
             }
             imageRecord.samHasRun = true;
             stateStore.markImageDirty(appState, imageRecord);
+            scheduleFolderAutosave();
 
             const actionText = existingCandidateCount > 0 ? 'Replaced candidates' : 'Found candidate masks';
             const annotationText = keepExistingAnnotations
@@ -1445,22 +1578,23 @@ ${badgeInfo.title}`;
     function deleteClass(index) {
         const classToDelete = appState.classes[index];
         if (!classToDelete) return;
-        const affectedCount = countAnnotationsWithClass(classToDelete.name);
-        if (affectedCount > 0) {
-            const msg = `"${classToDelete.name}" is used by ${affectedCount} loaded annotations. Reassign them before removing the class.`;
-            showClassManagerFeedback(msg);
-            showToast(msg, 'info');
-            return;
-        }
-        if (!window.confirm(`Remove "${classToDelete.name}" from the project class list? Saved annotation files are unchanged. Loading a file that uses this class will restore it.`)) return;
-        appState.classes.splice(index, 1);
-        clearAllAnnotationHistory();
+        if (appState.isDrawing || appState.isAwaitingChoice || appState.boxEditMode || annotationSavePending) return;
+        const annotations = currentAnnotations();
+        const affectedCount = annotations.filter(item => item.class === classToDelete.name).length;
+        if (!window.confirm(`Are you sure you want to delete the class "${classToDelete.name}" and remove ${affectedCount} annotations?\n\nOnly the current image is affected. Other images keep their annotations.`)) return;
+        if (appState.currentImage) {
+            annotationController.deleteClassFromImage(appState.classes, annotations, currentHistory(), currentRedoHistory(), index);
+            appState.selectedAnnotationIds.clear();
+            markCurrentImageDirty();
+        } else appState.classes.splice(index, 1);
         clearClassManagerFeedback();
         scheduleProjectClassesSave();
         renderClassControls(classificationSelect.value);
+        updateAnnotationLog();
+        renderImageBrowser();
         draw();
         updateButtonStates();
-        const msg = `Removed class "${classToDelete.name}". Annotations were preserved.`;
+        const msg = `Deleted class "${classToDelete.name}" and ${affectedCount} annotations from this image.`;
         updateStatus(msg);
         showToast(msg, 'info');
     }
@@ -1948,6 +2082,7 @@ ${badgeInfo.title}`;
         // Native dialog handles focus, text editing, and Escape. Workspace
         // shortcuts must not reach the annotations behind it.
         if (projectDialog.open) return;
+        if (appState.projectSettings?.taskType === 'instance_segmentation') return;
         const modal = modalKeyboardController.visibleModal([samSettingsModal, preprocessSettingsModal, helpModal]);
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -2730,7 +2865,7 @@ ${badgeInfo.title}`;
         if (!appState.currentImage) return false;
 
         const currentMatch = appState.annotationMatchesByImage.get(currentImageId());
-        if (currentMatch?.status === 'ambiguous') {
+        if (!window.SAM2ProjectFolder?.has(appState.currentImage.file) && currentMatch?.status === 'ambiguous') {
             if (!silentWhenMissing) {
                 const msg = `Ambiguous saved annotation file for ${publicImageName(appState.currentImage)}. Duplicate image names need path-specific annotation files.`;
                 updateStatus(msg);
@@ -2753,7 +2888,9 @@ ${badgeInfo.title}`;
 
         try {
             const imageSize = imageDimensions(imageRecord);
-            const data = await annotationWorkflowController.loadServerAnnotationsForImage(
+            const data = window.SAM2ProjectFolder?.has(imageRecord.file)
+                ? await loadFolderAnnotations(imageRecord)
+                : await annotationWorkflowController.loadServerAnnotationsForImage(
                 appState,
                 {
                     imageRecord,
@@ -2765,6 +2902,10 @@ ${badgeInfo.title}`;
                 }
             );
             if (data.stale || !isCurrent()) return false;
+            if (window.SAM2ProjectFolder?.has(imageRecord.file)) {
+                folderLoadFailures.delete(imageRecord.file);
+                imageRecord.serverAnnotationsChecked = true;
+            }
             updateMatchSummaryDisplay();
 
             if (!data.exists) {
@@ -2843,7 +2984,7 @@ ${badgeInfo.title}`;
 
         const imageRecord = appState.currentImage;
         const isCurrent = beginAnnotationOperation('save-feedback', imageRecord, false);
-        const stopLoading = setLoader(true, 'Saving annotations to server...');
+        const stopLoading = setLoader(true, 'Saving annotations beside image...');
 
         try {
             const data = await saveImageAnnotationsToServer(imageRecord, { confirmOverwrite: true });
@@ -2905,6 +3046,58 @@ ${badgeInfo.title}`;
         showToast(msg, 'success');
     }
 
+    const folderLoadFailures = new WeakSet();
+    async function annotationTextHash(text) {
+        const bytes = new TextEncoder().encode(text);
+        return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
+    }
+    async function loadFolderAnnotations(imageRecord) {
+        const format = currentAnnotationFormat();
+        const name = annotationCodecs.annotationDownloadName(imageRecord.name, format);
+        folderLoadFailures.add(imageRecord.file);
+        try {
+            const text = await window.SAM2ProjectFolder.read(imageRecord.file, name);
+            const metadataText = await window.SAM2ProjectFolder.read(imageRecord.file, `${name}.review.json`);
+            const metadata = metadataText === null ? null : JSON.parse(metadataText);
+            const matching = text !== null && metadata?.annotation_sha256 === await annotationTextHash(text);
+            const result = text === null ? { annotations: [] } : annotationCodecs.parseAnnotationFile(text, format, imageRecord,
+                { classes: matching ? metadata.classes : appState.classes });
+            if (matching) { result.classes = metadata.classes; result.review_status = metadata.review_status; }
+
+            return { ...result, exists: text !== null, path: name };
+        } catch (error) { folderLoadFailures.add(imageRecord.file); throw error; }
+    }
+    async function saveFolderAnnotations(imageRecord, annotations, reviewStatus) {
+        if (folderLoadFailures.has(imageRecord.file)) throw new Error('Existing annotations could not be loaded. Resolve the load error before saving.');
+        const format = currentAnnotationFormat();
+        const name = annotationCodecs.annotationDownloadName(imageRecord.name, format);
+        const output = annotationCodecs.buildAnnotationExport(imageRecord.name, annotations, format, imageRecord, { classes: appState.classes });
+        await window.SAM2ProjectFolder.write(imageRecord.file, name, output.content);
+        await window.SAM2ProjectFolder.write(imageRecord.file, `${name}.review.json`, JSON.stringify({
+            annotation_sha256: await annotationTextHash(output.content), classes: appState.classes, review_status: reviewStatus
+        }, null, 2));
+        return { count: annotations.length, path: name, review_status: reviewStatus };
+    }
+    let folderAutosaveTimer = null;
+    function scheduleFolderAutosave() {
+        if (!window.SAM2ProjectFolder) return;
+        clearTimeout(folderAutosaveTimer);
+        folderAutosaveTimer = setTimeout(async () => {
+            if (annotationSavePending || annotationDirectoryChangePending) { scheduleFolderAutosave(); return; }
+            for (const imageRecord of appState.images.filter(item => appState.dirtyImages.has(item.id))) {
+                try {
+                    const result = await saveImageAnnotationsToServer(imageRecord);
+                    if (result.stale) scheduleFolderAutosave();
+                } catch (error) {
+                    updateStatus(`Autosave failed: ${error.message}`);
+                    showToast(`Autosave failed: ${error.message}`, 'error');
+                    break;
+                }
+            }
+            renderImageBrowser();
+        }, 300);
+    }
+
     async function saveImageAnnotationsToServer(imageRecord, { confirmOverwrite = false, reviewStatus = imageRecord.reviewStatus } = {}) {
         // Response guards cannot undo server writes. Allow only one save at a time,
         // including across folder reloads, to keep older writes from winning on disk.
@@ -2920,7 +3113,9 @@ ${badgeInfo.title}`;
                 .filter(Boolean);
             appState.annotationsByImage.set(imageRecord.id, annotations);
             const isCurrent = beginAnnotationOperation('save', imageRecord);
-            const data = await annotationWorkflowController.saveImageAnnotationsToServer(
+            const data = window.SAM2ProjectFolder
+                ? await saveFolderAnnotations(imageRecord, annotations, reviewStatus)
+                : await annotationWorkflowController.saveImageAnnotationsToServer(
                 appState,
                 {
                     imageRecord,
@@ -3174,6 +3369,7 @@ ${badgeInfo.title}`;
             }
         );
         imageRecord.reviewClassSignature = stateStore.reviewClassSignature(appState);
+        if (markDirty) scheduleFolderAutosave();
         return normalizedAnnotations;
     }
 
@@ -3587,6 +3783,7 @@ ${badgeInfo.title}`;
 
     function markCurrentImageDirty() {
         stateStore.markCurrentImageDirty(appState);
+        scheduleFolderAutosave();
     }
 
     function resetInteractionState() {
@@ -3602,6 +3799,7 @@ ${badgeInfo.title}`;
     }
 
     function resetState() {
+        clearTimeout(folderAutosaveTimer);
         imageQueueSearch.value = '';
         stateStore.resetProjectState(appState);
         setLoader(false);
@@ -3789,6 +3987,8 @@ ${badgeInfo.title}`;
             draw();
             updateButtonStates();
             workspace.inert = false;
+            initializeProjectChooser(project);
+            void resumeProjectWorkspace(project);
         } catch (error) {
             updateStatus(`${error.message}. Reload the page to retry; editing is disabled to protect saved work.`);
         }

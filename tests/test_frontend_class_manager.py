@@ -104,7 +104,7 @@ def test_class_manager_exports_expected_class_logic():
         assert.deepStrictEqual(plain(newClass), {
             id: 3,
             name: 'cytoplasm',
-            color: '#58a6ff',
+            color: '#f2cc60',
             hotkey: 'y'
         });
 

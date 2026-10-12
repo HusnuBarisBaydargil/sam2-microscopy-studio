@@ -4,7 +4,7 @@
         throw new Error('SAM2FrontendConfig must be loaded before classManager.js.');
     }
 
-    const { CLASS_COLOR_PALETTE } = frontendConfig;
+    const { generateClassColor } = frontendConfig;
 
     function normalizeClassName(value) {
         return String(value || '').trim().replace(/\s+/g, ' ');
@@ -15,8 +15,8 @@
         return match ? match[0] : '';
     }
 
-    function isReservedHotkey(value) {
-        return ['b', 'u'].includes(normalizeHotkey(value));
+    function isReservedHotkey(value, reservedHotkeys = ['b', 'u']) {
+        return reservedHotkeys.includes(normalizeHotkey(value));
     }
 
     function getUniqueClassName(classes) {
@@ -31,21 +31,21 @@
         return name;
     }
 
-    function getFirstAvailableHotkey(className, classes) {
+    function getFirstAvailableHotkey(className, classes, reservedHotkeys = ['b', 'u']) {
         const usedHotkeys = new Set(classes.map(cls => cls.hotkey).filter(Boolean));
         const candidates = [
             ...normalizeClassName(className).toLowerCase().replace(/[^a-z0-9]/g, ''),
             ...'abcdefghijklmnopqrstuvwxyz0123456789'
         ];
 
-        return candidates.find(candidate => !usedHotkeys.has(candidate) && !isReservedHotkey(candidate)) || '';
+        return candidates.find(candidate => !usedHotkeys.has(candidate) && !isReservedHotkey(candidate, reservedHotkeys)) || '';
     }
 
     function classExists(classes, className) {
         return classes.some(cls => cls.name === className);
     }
 
-    function buildNewClass(className, classes, minimumClassId = 1) {
+    function buildNewClass(className, classes, minimumClassId = 1, reservedHotkeys = ['b', 'u']) {
         const normalizedName = normalizeClassName(className);
         const nextClassId = classes.reduce((maximum, cls) => {
             const classId = Number(cls.id);
@@ -54,8 +54,8 @@
         return {
             id: nextClassId,
             name: normalizedName,
-            color: CLASS_COLOR_PALETTE[classes.length % CLASS_COLOR_PALETTE.length],
-            hotkey: getFirstAvailableHotkey(normalizedName, classes)
+            color: generateClassColor(classes.length, classes.map(cls => cls.color)),
+            hotkey: getFirstAvailableHotkey(normalizedName, classes, reservedHotkeys)
         };
     }
 
@@ -75,7 +75,7 @@
             const safeHotkey = hotkey && !seenHotkeys.has(hotkey) ? hotkey : '';
             const color = /^#[0-9a-f]{6}$/i.test(String(cls.color || ''))
                 ? cls.color
-                : CLASS_COLOR_PALETTE[index % CLASS_COLOR_PALETTE.length];
+                : generateClassColor(index, [...classes.map(item => item.color), ...normalizedClasses.map(item => item.color)]);
 
             const normalizedClass = { name, color, hotkey: safeHotkey };
             const classId = Number(cls.id);

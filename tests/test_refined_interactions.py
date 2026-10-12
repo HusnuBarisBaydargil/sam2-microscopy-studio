@@ -10,7 +10,7 @@ import waitress
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('failure', [None, 'bind', 'fresh'])
+@pytest.mark.parametrize('failure', [None, 'bind', 'load'])
 def test_waitress_launcher_preserves_binding_and_upload_limit(monkeypatch, failure):
     source = ast.parse((ROOT / 'app.py').read_text(encoding='utf-8'))
     launcher = ast.Module(body=source.body[-1].body, type_ignores=[])
@@ -31,10 +31,10 @@ def test_waitress_launcher_preserves_binding_and_upload_limit(monkeypatch, failu
         calls.append((app, kwargs))
         return Server()
 
-    def fresh():
-        events.append('fresh')
-        if failure == 'fresh':
-            raise OSError('Cannot archive project')
+    def load():
+        events.append('load')
+        if failure == 'load':
+            raise OSError('Cannot load project')
 
     monkeypatch.setattr(waitress, 'create_server', bind)
     monkeypatch.setenv('APP_HOST', '127.0.0.1')
@@ -45,7 +45,7 @@ def test_waitress_launcher_preserves_binding_and_upload_limit(monkeypatch, failu
 
     app = App()
     scope = {
-        'app': app, 'os': os, '_start_fresh_project': fresh,
+        'app': app, 'os': os, '_project_manifest': load,
         '_positive_int_env': lambda key, default: int(os.environ.get(key, default))
     }
     if failure:
@@ -57,8 +57,8 @@ def test_waitress_launcher_preserves_binding_and_upload_limit(monkeypatch, failu
         assert events == ['bind']
         assert calls == []
     else:
-        assert events == (['bind', 'fresh', 'close'] if failure == 'fresh'
-                          else ['bind', 'fresh', 'run', 'close'])
+        assert events == (['bind', 'load', 'close'] if failure == 'load'
+                          else ['bind', 'load', 'run', 'close'])
         assert calls == [(app, {'host': '127.0.0.1', 'port': 5099, 'threads': 4,
                                'max_request_body_size': 64 * 1024 * 1024})]
 
@@ -128,14 +128,22 @@ const classRow={hidden:true};let focused=false;
 new Function('quickClassInput','updateStatus',addClass)({closest:()=>classRow,focus:()=>{focused=true;},scrollIntoView(){}},()=>{});
 assert.equal(classRow.hidden,false);assert.equal(focused,true);
 const functionBody=name=>source.match(new RegExp('    (?:async )?function '+name+'\\([^\\n]*\\) \\{([\\s\\S]*?)\\n    \\}'))[1];
-const state={classes:[{id:1,name:'User label'}]};let used=2,confirmed=0,saved=0;
-window.confirm=()=>{confirmed++;return true;};
+const state={classes:[{id:1,name:'User label'}],currentImage:{id:'current'},selectedAnnotationIds:new Set()};let confirmed=0,saved=0;
+let confirmation='';window.confirm=text=>{confirmation=text;confirmed++;return false;};
 const noop=()=>{};
-const remove=new Function('index','appState','countAnnotationsWithClass','showClassManagerFeedback','showToast','window','clearAllAnnotationHistory','clearClassManagerFeedback','scheduleProjectClassesSave','renderClassControls','classificationSelect','draw','updateButtonStates','updateStatus',functionBody('deleteClass'));
-const removeClass=()=>remove(0,state,()=>used,noop,noop,window,noop,noop,()=>saved++,noop,{value:'User label'},noop,noop,noop);
-removeClass();assert.equal(state.classes.length,1);assert.equal(confirmed,0);assert.equal(saved,0);
-used=0;window.confirm=()=>false;removeClass();assert.equal(state.classes.length,1);
-window.confirm=()=>true;removeClass();assert.equal(state.classes.length,0);assert.equal(saved,1);
+const annotations=[{id:1,class:'User label'},{id:2,class:'User label'},{id:3,class:'Other'}],otherImage=[{id:4,class:'User label'}];
+let dirty=0;
+const bindings={appState:state,annotationSavePending:false,currentAnnotations:()=>annotations,window,
+ annotationController:{deleteClassFromImage(classes,items){items.splice(0,2);classes.splice(0,1);}},
+ currentHistory:()=>[],currentRedoHistory:()=>[],markCurrentImageDirty:()=>dirty++,clearClassManagerFeedback:noop,
+ scheduleProjectClassesSave:()=>saved++,renderClassControls:noop,classificationSelect:{value:'User label'},
+ updateAnnotationLog:noop,renderImageBrowser:noop,draw:noop,updateButtonStates:noop,updateStatus:noop,showToast:noop};
+const remove=new Function(...Object.keys(bindings),'index',functionBody('deleteClass'));
+const removeClass=()=>remove(...Object.values(bindings),0);
+removeClass();assert.equal(state.classes.length,1);assert.equal(confirmed,1);assert.equal(saved,0);
+assert(confirmation.includes('remove 2 annotations'));assert(confirmation.includes('Only the current image'));
+window.confirm=()=>true;removeClass();assert.equal(state.classes.length,0);assert.equal(saved,1);assert.equal(dirty,1);
+assert.deepEqual(annotations,[{id:3,class:'Other'}]);assert.deepEqual(otherImage,[{id:4,class:'User label'}]);
 
 (async()=>{
 const appState={classes:[{id:1,name:'Before'}],nextClassId:2};

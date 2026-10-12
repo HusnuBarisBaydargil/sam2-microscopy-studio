@@ -4,7 +4,7 @@
         throw new Error('SAM2FrontendConfig must be loaded before classManager.js.');
     }
 
-    const { CLASS_COLOR_PALETTE } = frontendConfig;
+    const { generateClassColor } = frontendConfig;
 
     function normalizeClassName(value) {
         return String(value || '').trim().replace(/\s+/g, ' ');
@@ -50,7 +50,7 @@
         return {
             id: nextClassId,
             name: normalizedName,
-            color: CLASS_COLOR_PALETTE[classes.length % CLASS_COLOR_PALETTE.length],
+            color: generateClassColor(classes.length, classes.map(cls => cls.color)),
             hotkey: getFirstAvailableHotkey(normalizedName, classes)
         };
     }
@@ -71,7 +71,7 @@
             const safeHotkey = hotkey && !seenHotkeys.has(hotkey) ? hotkey : '';
             const color = /^#[0-9a-f]{6}$/i.test(String(cls.color || ''))
                 ? cls.color
-                : CLASS_COLOR_PALETTE[index % CLASS_COLOR_PALETTE.length];
+                : generateClassColor(index, [...classes.map(item => item.color), ...normalizedClasses.map(item => item.color)]);
 
             const normalizedClass = { name, color, hotkey: safeHotkey };
             const classId = Number(cls.id);
