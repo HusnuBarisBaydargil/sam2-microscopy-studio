@@ -73,3 +73,46 @@ def test_class_removed_on_one_image_does_not_break_another(client, request):
     assert client.post(endpoint, headers=headers, json={
         'action': 'save', 'image': image, 'document': document, 'revision': current['revision'],
     }).status_code == 200
+
+
+def test_undo_class_restore_rejects_name_conflicts_without_mutating_manifest(client, request, app_module):
+    headers, _, _ = request.getfixturevalue('polygon_project')
+    original = client.get('/api/classes').get_json()['classes'][0]
+    classes = client.post('/api/classes', headers=headers, json={
+        'classes': [original, {'name': 'Other'}]}).get_json()['classes']
+    other = classes[1]
+    assert client.post('/api/classes', headers=headers, json={'classes': [other]}).status_code == 200
+    reused = {**other, 'name': original['name']}
+    assert client.post('/api/classes', headers=headers, json={'classes': [reused]}).status_code == 200
+    before = client.get('/api/project/manifest').get_json()
+    before_bytes = Path(app_module._project_manifest_path()).read_bytes()
+    # Both insertion orders must reject instead of silently dropping either identity.
+    for attempted in ([original, reused], [reused, original]):
+        result = client.post('/api/classes', headers=headers, json={
+            'classes': attempted, 'restore_class_id': original['id']})
+        assert result.status_code == 409, result.get_json()
+        assert client.get('/api/project/manifest').get_json() == before
+        assert Path(app_module._project_manifest_path()).read_bytes() == before_bytes
+    # A stale editor may not know that another tab has reused the name.
+    result = client.post('/api/classes', headers=headers, json={
+        'classes': [original, other], 'restore_class_id': original['id']})
+    assert result.status_code == 409, result.get_json()
+    assert client.get('/api/project/manifest').get_json() == before
+    assert Path(app_module._project_manifest_path()).read_bytes() == before_bytes
+    assert client.post('/api/classes', headers=headers, json={'classes': [other]}).status_code == 200
+    restored = client.post('/api/classes', headers=headers, json={
+        'classes': [original, other], 'restore_class_id': original['id']})
+    assert restored.status_code == 200, restored.get_json()
+    assert restored.get_json()['classes'] == [original, other]
+
+
+def test_class_restore_requires_a_positive_integer_id(client, request, app_module):
+    headers, _, _ = request.getfixturevalue('polygon_project')
+    before = client.get('/api/project/manifest').get_json()
+    before_bytes = Path(app_module._project_manifest_path()).read_bytes()
+    for invalid in (None, True, 0, '1'):
+        response = client.post('/api/classes', headers=headers, json={
+            'classes': before['classes'], 'restore_class_id': invalid})
+        assert response.status_code == 400, response.get_json()
+        assert Path(app_module._project_manifest_path()).read_bytes() == before_bytes
+    assert client.get('/api/project/manifest').get_json() == before

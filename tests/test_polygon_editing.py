@@ -73,10 +73,16 @@ let saved = structuredClone(original), reject = false, hold = null, validations 
 let saveHold = null, saveFailure = null, saves = 0, loads = 0, serverRevision = 'r1';
 let importCalls = 0, importFailure = null, exportedPayload = null;
 let classFailure=null,classPayload=null,mergeHold=null,mergeError=null;
+let classRestorePayload=null,classRestoreMismatch=false;
 window.SAM2ApiClient = { async apiFetch(path, options) {
     if (path === 'api/load_image') return { ok: true, json: async () => ({width:100,height:100,image_url:'data:image/png;base64,'}) };
     const data = JSON.parse(options.body);
-    if(path==='api/classes'){classPayload=data.classes;if(classFailure)return {ok:false,json:async()=>({error:classFailure})};return {ok:true,json:async()=>({classes:data.classes.map((cls,i)=>({...cls,id:cls.id||Math.max(100,...data.classes.map(item=>item.id||0))+i+1}))})};}
+    if(path==='api/classes'){
+        classPayload=data.classes;classRestorePayload=data.restore_class_id;
+        if(classFailure)return {ok:false,json:async()=>({error:classFailure})};
+        const restored=data.classes.map((cls,i)=>({...cls,id:cls.id||Math.max(100,...data.classes.map(item=>item.id||0))+i+1}));
+        return {ok:true,json:async()=>({classes:classRestoreMismatch?restored.filter(cls=>cls.id!==data.restore_class_id):restored})};
+    }
     if (data.action === 'load') { loads++; return { ok: true, json: async () => ({document:structuredClone(saved),revision:serverRevision}) }; }
     if (data.action === 'import_labelme') {
         importCalls++;
@@ -540,6 +546,32 @@ const points = () => find('data-object-id',1).getAttribute('points');
     assert(classPayload.some(cls=>cls.name==='Later class'));assert(classPayload.some(cls=>cls.id===deletionId));
     await el('polygonRedo').click();assert(classPayload.some(cls=>cls.name==='Later class'));
     assert(!classPayload.some(cls=>cls.id===deletionId));
+    await el('polygonUndo').click();assert.deepEqual(saved,beforeClassDelete);
+    // Undo of class deletion must reject a reused name without touching data/history.
+    await el('polygonClassManager').onclick(deleteClick);
+    const beforeConflictUndo=structuredClone(saved);
+    const originalDeletedClass=beforeClasses.find(cls=>cls.id===deletionId);
+    const conflictIndex=classPayload.findIndex(cls=>cls.id!==deletionId);
+    const conflictingClass=structuredClone(classPayload[conflictIndex]);
+    await editClass('class-name-input',originalDeletedClass.name,conflictIndex);
+    const conflictedClasses=structuredClone(classPayload),beforeConflictSaves=saves;
+    assert(!el('polygonUndo').disabled);assert(el('polygonRedo').disabled);
+    await el('polygonUndo').click();
+    assert.deepEqual(saved,beforeConflictUndo);assert.deepEqual(classPayload,conflictedClasses);
+    assert.equal(saves,beforeConflictSaves);assert.equal(el('polygonSaveState').textContent,'Saved');
+    assert(el('polygonStatus').textContent.includes('name'));assert(el('polygonStatus').textContent.includes(originalDeletedClass.name));
+    assert(!el('polygonUndo').disabled);assert(el('polygonRedo').disabled);
+    await editClass('class-name-input',conflictingClass.name,conflictIndex);
+    classRestoreMismatch=true;await el('polygonUndo').click();classRestoreMismatch=false;
+    assert.equal(classRestorePayload,deletionId);assert.deepEqual(saved,beforeConflictUndo);
+    assert.equal(saves,beforeConflictSaves);assert(el('polygonStatus').textContent.includes('original class ID'));
+    assert(!el('polygonClass').children.some(option=>String(option.value)===String(deletionId)));
+    assert(!el('polygonUndo').disabled);assert(el('polygonRedo').disabled);
+    await el('polygonUndo').click();assert.deepEqual(saved,beforeClassDelete);
+    assert.equal(classRestorePayload,deletionId);
+    assert(classPayload.some(cls=>cls.id===deletionId));
+    await el('polygonRedo').click();assert.deepEqual(saved,beforeConflictUndo);
+    assert.equal(classRestorePayload,undefined);
     await el('polygonUndo').click();assert.deepEqual(saved,beforeClassDelete);
     // Native rectangle/circle tools complete after two clicks and retain editable handles.
     for (const [key, kind] of [['2','rectangle'],['3','circle']]) {
