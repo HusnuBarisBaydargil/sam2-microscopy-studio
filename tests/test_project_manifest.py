@@ -87,6 +87,30 @@ def test_class_ids_survive_reorder_and_rename_and_are_never_reused(tmp_path):
     assert manifest["classes"][1]["id"] > second_id
 
 
+@pytest.mark.parametrize('task_type', ['bounding_box', 'instance_segmentation'])
+def test_retired_classes_with_reused_names_survive_save_and_reload(tmp_path, task_type):
+    options = manifest_options(tmp_path)
+    path = tmp_path / 'project_manifest.json'
+    manifest = create_project_manifest(classes=[
+        {'name': 'A', 'color': '#39d353', 'hotkey': 'a'},
+        {'name': 'B', 'color': '#58a6ff', 'hotkey': 'b'},
+    ], task_type=task_type, **options)
+    first, second = manifest['classes']
+    manifest = save_project_manifest(update_manifest_classes(manifest, [second]), path, **options)
+    renamed = {**second, 'name': 'A'}
+    manifest = save_project_manifest(update_manifest_classes(manifest, [renamed]), path, **options)
+    manifest = save_project_manifest(update_manifest_classes(manifest, []), path, **options)
+    expected = [first, renamed]
+    assert manifest['classes'] == []
+    assert manifest['retired_classes'] == expected
+    assert load_or_create_project_manifest(path, **options)['retired_classes'] == expected
+    assert json.loads(path.read_text(encoding='utf-8'))['retired_classes'] == expected
+    # A subsequent class still receives a fresh ID; neither archived ID is recycled.
+    added = save_project_manifest(update_manifest_classes(manifest, [{'name': 'C'}]), path, **options)
+    assert added['classes'][0]['id'] > max(first['id'], second['id'])
+    assert added['retired_classes'] == expected
+
+
 def test_manifest_uses_valid_backup_and_rejects_future_schema(tmp_path):
     path = tmp_path / "project_manifest.json"
     options = manifest_options(tmp_path)

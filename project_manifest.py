@@ -104,11 +104,17 @@ def normalize_project_manifest(
         raw_manifest.get("classes"),
         raw_manifest.get("next_class_id", 1),
     )
-    retired_classes, next_class_id = normalize_manifest_classes(
-        raw_manifest.get("retired_classes", []), next_class_id,
-    )
     active_ids = {item["id"] for item in classes}
-    retired_classes = [item for item in retired_classes if item["id"] not in active_ids]
+    retired_by_id = {}
+    raw_retired = raw_manifest.get("retired_classes", [])
+    if isinstance(raw_retired, list):
+        # Names can be reused after deletion; archived definitions belong to IDs.
+        for item in raw_retired:
+            definitions, next_class_id = normalize_manifest_classes([item], next_class_id)
+            for definition in definitions:
+                if definition["id"] not in active_ids:
+                    retired_by_id.setdefault(definition["id"], definition)
+    retired_classes = list(retired_by_id.values())
     if task_type == PROJECT_TASK_INSTANCE_SEGMENTATION:
         _normalize_segmentation_class_controls(classes)
     return {
