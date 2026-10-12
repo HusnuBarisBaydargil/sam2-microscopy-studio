@@ -81,6 +81,70 @@ def test_folder_autosave_restores_retired_class_with_original_id(client, polygon
 
 
 @pytest.mark.parametrize('folder', [False, True])
+def test_repeated_class_name_reuse_keeps_both_saved_images_reopenable(client, polygon_project, app_module, folder):
+    headers, image, doc = polygon_project
+    endpoint = '/api/project/segmentation'
+    first = client.get('/api/classes').get_json()['classes'][0]
+    classes = client.post('/api/classes', headers=headers, json={
+        'classes': [first, {'name': 'Other', 'color': '#58a6ff', 'hotkey': 'o'}]}).get_json()['classes']
+    second = classes[1]
+    files = []
+
+    def snapshot(class_info, identity, object_id, image_name):
+        document = copy.deepcopy(doc)
+        document['image']['identity'] = identity
+        document['next_object_id'] = object_id + 1
+        document['annotations'][0].update(id=object_id, class_id=class_info['id'], source='sam2', edited=True,
+            labelme={'group_id': object_id, 'description': 'preserve'})
+        document = normalize_segmentation_document(document, project_id=headers['X-Project-ID'],
+            image_identity=identity, image_size=(image['width'], image['height']), class_ids=[class_info['id']])
+        raw = export_labelme(document, [class_info], image_name)
+        if not folder:
+            saved = client.post(endpoint, headers=headers, json={'action': 'save', 'image': document['image'],
+                'image_name': image_name, 'document': document, 'revision': None})
+            assert saved.status_code == 200, saved.get_json()
+            path = Path(app_module._annotation_dir()) / (identity + '.studio.json')
+            files.append((path, path.read_bytes()))
+        return document, raw
+
+    first_doc, first_raw = snapshot(first, 'a' * 64, 7, 'first.tiff')
+    assert client.post('/api/classes', headers=headers, json={'classes': [second]}).status_code == 200
+    renamed = {**second, 'name': first['name']}
+    assert client.post('/api/classes', headers=headers, json={'classes': [renamed]}).status_code == 200
+    second_doc, second_raw = snapshot(renamed, 'b' * 64, 11, 'second.tiff')
+    assert client.post('/api/classes', headers=headers, json={'classes': []}).status_code == 200
+    # Reopen the project after writing its archived manifest, as a resumed session would.
+    current = client.get('/api/project/manifest').get_json()
+    other = client.post('/api/project/projects', headers=headers, json={'action': 'new', 'name': 'Temporary'}).get_json()
+    reopened = client.post('/api/project/projects', headers={'X-Project-ID': other['project_id']}, json={
+        'action': 'open', 'project_id': headers['X-Project-ID']})
+    assert reopened.status_code == 200, reopened.get_json()
+    app_module.PROJECT_MANIFEST = None
+    manifest = client.get('/api/project/manifest').get_json()
+    assert manifest['retired_classes'] == [first, renamed]
+    assert manifest['next_class_id'] == current['next_class_id']
+    for index, (expected, raw, image_name) in enumerate([(first_doc, first_raw, 'first.tiff'), (second_doc, second_raw, 'second.tiff')]):
+        payload = {'action': 'load', 'image': expected['image']}
+        if folder:
+            payload.update(labelme=raw, image_name=image_name)
+        result = client.post(endpoint, headers=headers, json=payload)
+        assert result.status_code == 200, result.get_json()
+        result = result.get_json()
+        assert result['document'] == expected
+        assert expected['annotations'][0]['class_id'] in {item['id'] for item in result['classes']}
+        exported = client.post(endpoint, headers=headers, json={'action': 'export_labelme', 'image': expected['image'],
+            'image_name': image_name, 'document': result['document']})
+        assert exported.status_code == 200, exported.get_json()
+        assert exported.get_json()['labelme']['shapes'][0]['microscopy_studio']['id'] == expected['annotations'][0]['id']
+        # Resolve the existing active-name conflict before reopening the other identity.
+        if index == 0:
+            active = result['classes']
+            assert client.post('/api/classes', headers=headers, json={'classes': [{**item, 'name': 'Resolved'} for item in active]}).status_code == 200
+    for path, before in files:
+        assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('folder', [False, True])
 def test_retired_class_name_conflict_preserves_files_and_manifest(client, polygon_project, app_module, folder):
     headers, image, doc = polygon_project
     endpoint = '/api/project/segmentation'
