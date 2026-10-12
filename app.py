@@ -738,7 +738,15 @@ def segmentation_document_endpoint():
             load_context = {**context, "class_ids": context["class_ids"] +
                             [item["id"] for item in manifest.get("retired_classes", [])]}
             recovered = False
-            if revision is None:
+            if "labelme" in data:
+                # The file beside the image is authoritative; restore native IDs and provenance.
+                raw = data["labelme"]
+                image_name = image_basename(data.get("image_name"))
+                if isinstance(raw, dict) and raw.get("imagePath") == _public_image_name(image_name):
+                    image_name = _public_image_name(image_name)
+                inspect_labelme(raw, image, image_name)
+                document = decode_segmentation_document(raw, **load_context)
+            elif revision is None:
                 document = {"schema_version": 1, "task_type": "instance_segmentation",
                             "project_id": manifest["project_id"], "image": image,
                             "next_object_id": 1, "annotations": []}
