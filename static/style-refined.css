@@ -2032,21 +2032,25 @@ summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 3
 .class-manager { gap: 5px; }
 .quick-class-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .quick-class-row input { grid-column: 1 / -1; }
-.class-row { grid-template-columns: minmax(0, 1fr) auto; padding: 4px 0; border-bottom: 1px solid var(--border-color); }
-.class-select-btn { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 34px; padding: 7px; background: transparent; color: var(--text-color); border: 1px solid transparent; border-radius: 5px; cursor: pointer; text-align: left; font: inherit; }
+.class-row { grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 3px; padding: 5px 0; border-bottom: 1px solid var(--border-color); }
+.class-select-btn { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; min-height: 34px; padding: 7px 5px; background: transparent; color: var(--text-color); border: 1px solid transparent; border-radius: 5px; cursor: pointer; text-align: left; font: inherit; }
 .class-select-btn:hover { background: var(--surface-2); }
 .class-select-btn[aria-pressed="true"] { background: #293c5d; border-color: #557aaf; }
 .class-display-name { flex: 1; overflow-wrap: anywhere; min-width: 0; }
 .class-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: 0 0 10px; }
 .class-select-btn kbd, .manual-class-picker kbd { font: inherit; font-size: 11px; color: inherit; opacity: .8; margin-left: auto; }
-.class-editor summary { padding: 7px; color: var(--text-muted); font-size: 11px; list-style: none; border-radius: 4px; }
-.class-editor summary:hover { background: var(--surface-2); color: var(--text-color); }
-.class-editor[open] { grid-column: 1 / -1; }
-.class-editor[open] summary { text-align: right; }
+.class-edit-btn { padding: 7px; color: var(--text-muted); font: inherit; font-size: 12px; border: 0; background: transparent; border-radius: 4px; cursor: pointer; }
+.class-edit-btn:hover { background: var(--surface-2); color: var(--text-color); }
+.class-editor[open] { display: contents; }
+.class-editor[open] .class-edit-btn { grid-column: 2; grid-row: 1; }
 .class-editor-fields { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; padding: 8px; background: var(--bg-color); border-radius: 5px; }
+.class-editor-fields[hidden] { display: none; }
 .class-editor-fields .class-hotkey-field { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) 44px; }
 .class-editor-fields .class-hotkey-input { width: 44px; }
-.class-editor-fields .class-delete-btn { grid-column: 1 / -1; width: auto; color: #fca5a5; }
+.class-editor[open] .class-editor-fields { grid-column: 1 / -1; grid-row: 2; }
+.class-row > .class-delete-btn { grid-column: 3; grid-row: 1; width: 30px; min-height: 30px; padding: 6px; margin: 0; background: transparent; border-color: transparent; color: var(--text-muted); }
+.class-row > .class-delete-btn:hover { color: #fca5a5; background: rgba(239, 68, 68, .12); }
+.class-edit-btn { min-height: 34px; display: flex; align-items: center; }
 .class-select-btn:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 2px; }
 .workspace-toolbar .panel-toggle { border-color: transparent; padding: 6px; min-width: 30px; width: 30px; }
 .panel-glyph { display: block; width: 17px; height: 15px; border: 1.5px solid currentColor; border-radius: 3px; position: relative; color: var(--text-muted); }
@@ -2073,14 +2077,73 @@ summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 3
 .picker-actions .btn { background: transparent; }
 .picker-create-form { display: grid; gap: 7px; }
 @media (pointer: coarse) {
-    .class-select-btn, .class-editor summary, .workspace-toolbar .panel-toggle { min-height: 44px; }
+    .class-select-btn, .class-edit-btn, .class-row > .class-delete-btn, .workspace-toolbar .panel-toggle { min-height: 44px; }
     .workspace-toolbar .panel-toggle { width: 44px; }
 }
 
-#projectDialog { color: var(--text-color, #e7e9ed); background: #242932; border: 1px solid #4b5360; border-radius: 10px; width: min(440px, 85vw); padding: 24px; }
+#projectDialog { color: var(--text-color, #e7e9ed); background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 12px; width: min(680px, 94vw); max-height: 90vh; overflow-y: auto; padding: 24px; margin: auto; }
 #projectDialog::backdrop { background: #0009; }
 #projectDialog label, #projectDialog button { display: block; margin-top: 12px; }
 #projectDialog p { line-height: 1.5; }
+#projectDialog h3, #projectDialog hr { margin-top: 20px; }
+#projectDialog .project-type-options { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; border: 0; margin: 16px 0; }
+#projectDialog legend { margin-bottom: 8px; color: var(--text-muted); }
+#projectDialog .project-type-card { display: flex; flex-direction: column; gap: 7px; padding: 14px; margin: 0; border: 2px solid var(--border-color); border-radius: 10px; cursor: pointer; background: var(--bg-color); }
+#projectDialog .project-type-card:has(input:checked) { border-color: var(--focus-color); background: var(--surface-2); }
+#projectDialog .project-type-card:focus-within { outline: 2px solid var(--focus-color); outline-offset: 3px; }
+.project-type-card input { align-self: start; }
+.project-type-card small { color: var(--text-muted); }
+.project-type-art { display: flex; align-items: center; justify-content: space-evenly; height: 76px; background: #263442; border-radius: 6px; }
+.project-type-art span { display: block; width: 48px; height: 36px; border: 2px solid #c2b9ff; background: radial-gradient(ellipse, #adb4ba 30%, #5c7079 60%, transparent 65%); }
+.project-type-art span + span { width: 32px; height: 52px; border-color: #67d7c3; }
+.segmentation-art span { border-radius: 45% 55% 40% 60%; background-color: #c2b9ff33; }
+.project-mode-badge { color: var(--text-muted); font-size: .8rem; padding: 4px 0; }
+.top-brand #manageProjectsBtn { align-self: start; margin-top: 5px; }
+#segmentationProjectNotice { grid-column: 1 / -1; grid-row: 2; min-height: 0; overflow: auto; padding: 16px; }
+.polygon-header, .polygon-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.polygon-header { justify-content: space-between; }
+.polygon-header h2 { font-size: 18px; }
+.polygon-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 240px; gap: 12px; align-items: start; }
+.polygon-workspace { min-width: 0; }
+.polygon-toolbar { padding: 8px; background: var(--surface-color); border-radius: 8px; gap: 8px; }
+.polygon-tool-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-right: 8px; border-right: 1px solid var(--border-color); }
+.polygon-tool-group:last-child { border-right: 0; padding-right: 0; }
+.polygon-view-tools { margin-left: auto; }
+.polygon-toolbar .btn { margin: 0; }
+.polygon-toolbar [hidden] { display: none; }
+.polygon-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.polygon-file-menu { position: relative; }
+.polygon-file-menu summary { cursor: pointer; }
+.polygon-file-actions { position: absolute; top: 100%; left: 0; z-index: 20; width: 220px; max-width: calc(100vw - 56px); display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--surface-color); box-shadow: 0 8px 24px #0006; }
+.polygon-file-actions .btn { margin: 0; text-align: left; }
+.polygon-processing { border-top: 1px solid var(--border-color); margin-top: 16px; padding-top: 12px; }
+.polygon-processing > summary { cursor: pointer; font-weight: 600; }
+#polygonSamInfo:empty, #polygonSamDetails:empty { display: none; }
+.polygon-layout aside { padding: 12px; background: var(--surface-color); border-radius: 8px; min-width: 0; }
+.polygon-layout h3, .polygon-layout label, .polygon-layout button { margin: 8px 0; }
+.polygon-layout label { display: block; }
+.polygon-layout label[hidden] { display: none; }
+.polygon-layout .form-control { width: 100%; }
+.polygon-stage { background: #101318; overflow: hidden; height: min(55vh, 780px); min-height: 280px; position: relative; touch-action: none; user-select: none; }
+#polygonCanvas { display: block; width: 100%; margin: auto; }
+#polygonCanvas[hidden] { display: none; }
+.polygon-vertex { cursor: grab; touch-action: none; }
+.polygon-vertex:active { cursor: grabbing; }
+.polygon-edge { cursor: copy; pointer-events: stroke; }
+#polygonEmpty { padding: 20px; color: var(--text-muted); }
+#polygonObjectList button { display: block; width: 100%; text-align: left; }
+#polygonObjectList button[aria-pressed="true"] { border-color: var(--focus-color); }
+#polygonSaveState { font-weight: 600; }
+#polygonStatus { padding: 6px 10px; color: #f6cb78; }
+@media (max-width: 850px) { .polygon-layout { grid-template-columns: 1fr; } }
+.segmentation-project #projectPanel, .segmentation-project .main-content, .segmentation-project #annotationPanel,
+.segmentation-project .top-load-actions, .segmentation-project .top-save-actions,
+.segmentation-project .workspace-footer, .segmentation-project #status-panel { display: none; }
+#projectDialog #newProjectName { width: 100%; }
+@media (max-width: 520px) {
+    #projectDialog .project-type-options { grid-template-columns: 1fr; }
+    #projectDialog { padding: 18px; }
+}
 
 .canvas-visibility { position: absolute; left: 12px; bottom: 12px; z-index: 5; padding: 8px 12px; border: 1px solid #4b5360; border-radius: 8px; background: #242932; color: #e7e9ed; font-size: 12px; }
 .canvas-visibility summary { cursor: pointer; }
@@ -2096,6 +2159,15 @@ summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 3
 /* Keep long datasets navigable without pushing later controls out of reach. */
 #imageQueueSearch, #classListSearch { margin: 8px 0; min-width: 0; width: 100%; }
 #classManager { max-height: 320px; overflow-y: auto; scrollbar-gutter: stable; }
+#polygonClassManager { max-height: 320px; overflow-y: auto; scrollbar-gutter: stable; margin-top: 8px; }
+#polygonClassManager .class-select-btn, #polygonClassManager label, #polygonClassManager button { margin: 0; }
+#polygonClassManager .class-hotkey-field { display: grid; }
+#polygonClassSearch { margin-top: 8px; }
+.polygon-class-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin-top: 8px; }
+.polygon-class-settings { flex: 1; min-width: 0; }
+.polygon-class-settings[open] { flex-basis: 100%; }
+.polygon-class-settings summary { cursor: pointer; font-size: 12px; padding: 6px 0; }
+.polygon-class-actions #polygonAddClass { margin: 0; padding: 5px 8px; font-size: 12px; }
 .image-list-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 #activeProjectName { display: block; overflow-wrap: anywhere; }
 .class-row[hidden], #classSearchEmpty[hidden] { display: none; }
@@ -2106,7 +2178,6 @@ summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 3
 /* Compact header keeps space available for the image. */
 .top-bar { padding-block: 8px; align-items: center; }
 .top-brand { padding-top: 0; }
-.class-editor[open] summary { font-size: 20px; line-height: 1; }
 
 /* Export actions overlay the workspace instead of stretching the header. */
 .top-save-actions { position: relative; }
@@ -2158,3 +2229,160 @@ summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 3
     .workspace-review { justify-self: center; justify-content: center; }
     .workspace-save { justify-content: center; }
 }
+
+/* SAM2 proposals are temporary until batch acceptance. */
+.sam-proposal { fill: #b8bdc5; fill-opacity: .025; stroke: #b8bdc5; stroke-width: 1; cursor: pointer; filter: drop-shadow(0 0 .5px #202329); }
+.sam-proposal.hovered { stroke: white; stroke-width: 1.25; }
+.sam-proposal.selected { stroke: #f6cb78; fill: #f6cb78; stroke-width: 1.5; }
+.sam-badge { cursor: pointer; }
+.sam-badge rect { fill: #292d33; stroke: #b8bdc5; stroke-width: 1; }
+.sam-badge text { fill: #fff; font: bold 12px sans-serif; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.sam-badge.hovered rect { stroke: #fff; fill: #375165; }
+.sam-badge.selected rect { fill: #f6cb78; stroke: #f6cb78; }
+.sam-badge.selected text { fill: #142027; }
+.sam-badge:focus-visible rect { stroke: white; stroke-width: 3; }
+.polygon-sam-actions { display: flex; gap: 6px; }
+#polygonSamClass { width: 150px; max-width: 100%; margin: 0; }
+.polygon-sam-actions .btn { margin: 0; white-space: normal; }
+
+/* Segmentation gives the remaining viewport to the image, with scrollable side panels. */
+.app-container.segmentation-project[class] {
+    height: 100dvh; min-height: 0; overflow: hidden;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "top" "editor";
+}
+.segmentation-project .top-bar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand help"; gap: 8px; padding: 5px 10px; }
+.segmentation-project .top-brand { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.segmentation-project .top-brand h1 { font-size: 14px; }
+.segmentation-project .top-brand span, .segmentation-project .top-brand #manageProjectsBtn { margin: 0; align-self: auto; }
+.segmentation-project .top-bar .btn { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.segmentation-project .help-btn { width: 28px; height: 28px; }
+.segmentation-project #segmentationProjectNotice { grid-area: editor; display: flex; flex-direction: column; padding: 6px 10px 8px; overflow: hidden; }
+.segmentation-project .polygon-header { flex-shrink: 0; gap: 6px; margin-bottom: 6px; }
+.segmentation-project .polygon-header h2 { font-size: 16px; overflow-wrap: anywhere; }
+.segmentation-project .polygon-header > div:first-child { min-width: 0; flex: 1; }
+.segmentation-project .polygon-header .btn { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.segmentation-project #polygonEditor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.segmentation-project .polygon-layout { flex: 1; min-height: 0; grid-template-columns: 200px minmax(0, 1fr) 210px; grid-template-rows: minmax(0, 1fr); gap: 8px; }
+.segmentation-project .polygon-layout > aside { max-height: 100%; overflow: auto; padding: 10px; }
+.segmentation-project .polygon-file-actions { width: 100%; }
+.segmentation-project .polygon-workspace { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.segmentation-project .polygon-toolbar { flex-shrink: 0; padding: 5px; margin-bottom: 6px; }
+.segmentation-project .polygon-toolbar .btn { min-height: 30px; padding: 5px 8px; }
+.segmentation-project .polygon-stage { flex: 1; height: auto; min-height: 0; }
+.segmentation-project #polygonSaveState { font-size: 11px; color: var(--text-muted); }
+@media (max-width: 850px) {
+    .app-container.segmentation-project[class] { height: auto; min-height: 100dvh; overflow: visible; }
+    .segmentation-project #segmentationProjectNotice { overflow: visible; }
+    .segmentation-project .polygon-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+    .segmentation-project .polygon-layout > aside { max-height: none; overflow: visible; }
+    .segmentation-project .polygon-stage { flex: none; height: 65dvh; min-height: 280px; }
+}
+
+
+#polygonObjectList { max-height: min(32vh, 300px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border: 1px solid var(--border-color); border-radius: 6px; padding: 4px; }
+#polygonObjectList:empty { display: none; }
+
+.shape-tool { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.shape-tool svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; flex-shrink: 0; }
+
+.polygon-object-row { display: flex; gap: 4px; }
+#polygonObjectList .polygon-object-row > button:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#polygonObjectList .polygon-object-menu { width: 32px; flex-shrink: 0; text-align: center; }
+.polygon-object-label { cursor: pointer; }
+.polygon-object-label text { fill: white; font: 12px sans-serif; pointer-events: none; }
+.polygon-label-picker { position: fixed; width: min(250px, calc(100vw - 16px)); box-sizing: border-box; max-height: 60vh; overflow-y: auto; padding: 12px; background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 8px; z-index: 1000; box-shadow: 0 8px 30px #0008; }
+.polygon-label-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#polygonLabelChoices button { display: block; width: 100%; text-align: left; }
+
+/* Segmentation overlay controls affect presentation only. */
+#polygonCanvas[data-showobjects="false"] #polygonShapes > [data-object-id],
+#polygonCanvas[data-showsuggestions="false"] #polygonProposals,
+#polygonCanvas[data-showsuggestions="false"] #polygonProposalBadges,
+#polygonCanvas[data-shownumbers="false"] #polygonProposalBadges { display: none; }
+#polygonCanvas[data-outlineonly="true"] .sam-proposal,
+#polygonCanvas[data-outlineonly="true"] [data-object-id] { fill-opacity: 0; }
+.polygon-view-menu { position: relative; }
+.polygon-view-menu > summary { cursor: pointer; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; }
+.polygon-view-options { position: absolute; right: 0; top: 100%; z-index: 20; width: 190px; padding: 10px; background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 16px #0005; }
+.polygon-view-options label { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+.polygon-view-options input { width: auto; margin: 0; }
+
+#polygonSamReview { flex-shrink: 0; flex-wrap: wrap; align-items: center; padding: 5px 8px; margin-bottom: 6px; background: var(--surface-color); border-radius: 6px; }
+#polygonSamReview[hidden] { display: none; }
+.polygon-toolbar .shape-tool[aria-pressed="false"] { background: var(--surface-color); color: var(--text-color); border-color: var(--border-color); }
+.polygon-toolbar .shape-tool[aria-pressed="true"] { opacity: 1; }
+
+.polygon-prompt-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; padding: 5px; margin-bottom: 6px; background: var(--surface-color); border-radius: 6px; }
+.polygon-prompt-bar[hidden] { display: none; }
+.polygon-prompt-bar .btn { margin: 0; }
+#polygonPromptClass { width: 140px; }
+.polygon-prompt-bar [aria-pressed="true"] { border-color: var(--primary-color); box-shadow: inset 0 -2px var(--primary-color); }
+#polygonCanvas[data-prompting="true"] #polygonShapes,
+#polygonCanvas[data-prompting="true"] #polygonProposals { opacity: .3; pointer-events: none; }
+#polygonCanvas[data-prompting="true"] #polygonProposalBadges { display: none; }
+
+/* Keep creation tools stable and show editing actions beside the active object. */
+.polygon-header > div:first-child { display: flex; align-items: baseline; gap: 12px; overflow: hidden; }
+#polygonImageName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 12px; }
+#polygonSaveState { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+#polygonSaveState::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+#polygonSaveState[data-state="saved"]::before { background: #65c58b; }
+#polygonSaveState[data-state="draft"]::before { background: #e5ba72; }
+#polygonSaveState[data-state="error"]::before { background: #f87171; }
+#polygonSaveState[data-state="working"]::before { background: #70b7ff; animation: polygon-save-pulse 1s ease-in-out infinite alternate; }
+@keyframes polygon-save-pulse { to { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { #polygonSaveState[data-state="working"]::before { animation: none; } }
+.polygon-edit-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 38px; flex-shrink: 0; padding: 4px 8px; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 6px; }
+.polygon-edit-context .btn { margin: 0; padding: 5px 8px; min-height: 28px; }
+#polygonModeState { color: var(--text-muted); font-size: 12px; }
+#polygonModeState[data-mode="draw"], #polygonModeState[data-mode="prompt"] { color: #f6cb78; }
+#polygonModeState[data-mode="selection"] { color: var(--text-color); }
+#polygonSelectionActions[hidden] { display: none; }
+.polygon-edit-context .polygon-prompt-bar { display: contents; }
+.polygon-edit-context .polygon-prompt-bar[hidden] { display: none; }
+.polygon-edit-context #polygonPromptClass { flex: 0 0 110px; width: 110px; margin: 0; }
+#polygonPromptHint:empty { display: none; }
+#polygonDelete:hover { color: #fca5a5; border-color: #a84a4a; }
+#polygonObjectCount { color: var(--text-muted); font-size: 12px; font-weight: normal; }
+#polygonObjectList button[aria-pressed="true"] { background: #293c5d; border-color: #557aaf; }
+.polygon-sam-settings > summary { cursor: pointer; padding: 8px 0; color: var(--text-muted); }
+#polygonSamDetails:empty { display: none; }
+#polygonSamReview #polygonSamInfo { color: var(--text-muted); font-size: 12px; margin: 0; }
+#polygonSamReview [hidden], .polygon-prompt-bar [hidden] { display: none; }
+#polygonCanvas[data-original="true"] .prompt-preview { visibility: hidden; }
+.prompt-original, .prompt-preview { pointer-events: none; }
+#polygonCanvas[data-local-correcting="true"] #polygonShapes,
+#polygonCanvas[data-local-correcting="true"] #polygonProposals { opacity: .3; pointer-events: none; }
+#polygonCanvas[data-local-correcting="true"] #polygonProposalBadges { display: none; }
+.polygon-toolbar .shape-tool[aria-pressed="true"] { background: #293c5d; border-color: #557aaf; }
+
+.polygon-review-progress { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.polygon-review-progress progress { width: 60px; height: 6px; accent-color: #65c58b; }
+#polygonReviewCount { font-size: 11px; color: var(--text-muted); }
+.polygon-queue-filters { display: flex; gap: 4px; }
+.polygon-layout .polygon-queue-filters .btn { margin: 0; padding: 4px 6px; min-height: 28px; font-size: 11px; }
+.polygon-queue-filters [aria-pressed="true"] { background: #293c5d; border-color: #557aaf; }
+#polygonImageQueue { max-height: 35vh; overflow-y: auto; overscroll-behavior: contain; margin: 6px 0 12px; }
+.polygon-layout .polygon-image-row { display: flex; flex-direction: column; gap: 3px; width: 100%; margin: 2px 0; padding: 8px; text-align: left; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-color); cursor: pointer; }
+.polygon-image-row > span:first-child { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.polygon-image-review { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10px; }
+.polygon-image-review::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.polygon-image-row[data-review="in_progress"] .polygon-image-review::before { background: #e5ba72; }
+.polygon-image-row[data-review="reviewed"] .polygon-image-review::before,
+.polygon-image-row[data-review="confirmed_empty"] .polygon-image-review::before { background: #65c58b; }
+.polygon-image-row[data-review="error"] .polygon-image-review::before { background: #f87171; }
+.polygon-layout .polygon-image-row[aria-current="true"] { border-color: #557aaf; background: #293c5d; }
+.polygon-image-row:hover { background: var(--surface-color); }
+.polygon-image-row:disabled { opacity: .6; cursor: default; }
+.polygon-review-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0; padding-top: 8px; }
+.polygon-review-footer .btn { margin: 0; min-height: 30px; padding: 5px 8px; font-size: 12px; }
+.polygon-review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.polygon-review-footer [hidden] { display: none; }
+#polygonReviewState { color: var(--text-muted); font-size: 12px; }
+#polygonReviewState[data-review="reviewed"], #polygonReviewState[data-review="confirmed_empty"] { color: #65c58b; }
+#polygonQueueEmpty { font-size: 11px; color: var(--text-muted); }
+.project-resume-bar { display: inline-flex; align-items: center; gap: 8px; color: #e5ba72; font-size: 11px; }
+.project-resume-bar[hidden] { display: none; }
+.project-resume-bar .btn { min-height: 28px; padding: 4px 8px; font-size: 12px; }

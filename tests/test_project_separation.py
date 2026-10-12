@@ -52,6 +52,43 @@ def test_reuse_is_explicit_and_old_tabs_cannot_write(client):
     assert identity(client) == new
 
 
+def test_chooser_creates_lists_and_reopens_segmentation_without_detection_writes(client, app_module):
+    detection = identity(client)
+    response = client.post("/api/project/projects", headers=header(detection), json={
+        "action": "new", "name": "Cell outlines", "task_type": "instance_segmentation",
+    })
+    assert response.status_code == 200
+    segmentation = response.get_json()
+    assert segmentation["task_type"] == "instance_segmentation"
+    assert segmentation["classes"] == []
+    listing = client.get("/api/project/projects", headers=header(segmentation)).get_json()
+    assert {p["task_type"] for p in listing["projects"]} == {"bounding_box", "instance_segmentation"}
+    output = Path(app_module._annotation_dir())
+    before = list(output.glob("*")) if output.exists() else []
+    blocked = client.post("/api/annotations/save", headers=header(segmentation), json={
+        "image_name": "field.png", "annotations": [{"bbox": [0, 0, 10, 10], "class": "cell"}],
+    })
+    assert blocked.status_code == 409
+    assert "Detection annotation routes" in blocked.get_json()["error"]
+    assert (list(output.glob("*")) if output.exists() else []) == before
+    assert client.post("/api/project/projects", headers=header(segmentation), json={
+        "action": "open", "project_id": detection["project_id"],
+    }).get_json()["task_type"] == "bounding_box"
+    assert client.post("/api/project/projects", headers=header(detection), json={
+        "action": "open", "project_id": segmentation["project_id"],
+    }).get_json() == segmentation
+
+
+def test_chooser_rejects_unknown_task_without_switching(client):
+    current = identity(client)
+    for task in (None, "", "semantic", 1, []):
+        result = client.post("/api/project/projects", headers=header(current), json={
+            "action": "new", "name": "Invalid", "task_type": task,
+        })
+        assert result.status_code == 400
+        assert identity(client) == current
+
+
 def test_invalid_switches_and_failed_persistence_preserve_active_project(client, app_module, monkeypatch):
     old = identity(client)
     for payload in [{"action": "new", "name": " "}, {"action": "open", "project_id": "../../bad"}, {"action": "new", "name": "valid", "reuse_classes": "yes"}]:
@@ -65,34 +102,29 @@ def test_invalid_switches_and_failed_persistence_preserve_active_project(client,
     assert identity(client) == old
 
 
-def test_fresh_start_archives_classes_and_leaves_annotations_untouched(client, app_module):
+def test_restart_restores_active_project_and_leaves_annotations_untouched(client, app_module):
     client.post("/api/classes", json={"classes": [{"name": "Saved label"}]})
     previous = identity(client)
     output = Path(app_module._annotation_dir())
     output.mkdir(parents=True, exist_ok=True)
     annotation = output / "preserved.csv"
     annotation.write_bytes(b"existing annotations")
-    fresh = app_module._start_fresh_project()
-    assert fresh["classes"] == []
-    assert fresh["project_id"] != previous["project_id"]
-    assert fresh["settings"]["annotation_output_dir"] != previous["settings"]["annotation_output_dir"]
+    app_module.PROJECT_MANIFEST = None
+    app_module.PROJECT_SETTINGS = None
+    assert app_module._project_manifest() == previous
     assert annotation.read_bytes() == b"existing annotations"
-    # Browser refresh/API reads must not create yet another project.
-    assert identity(client) == fresh
-    assert identity(client) == fresh
-    restored = client.post("/api/project/projects", headers=header(fresh), json={
-        "action": "open", "project_id": previous["project_id"],
-    })
-    assert restored.status_code == 200
-    assert restored.get_json() == previous
+    assert identity(client) == previous
+    assert identity(client) == previous
 
 
-def test_fresh_start_archive_failure_keeps_active_project(client, app_module, monkeypatch):
+def test_restart_restores_segmentation_project_settings_and_classes(client, app_module):
+    current = identity(client)
+    project = client.post("/api/project/projects", headers=header(current), json={
+        "action": "new", "name": "Resume outlines", "task_type": "instance_segmentation",
+    }).get_json()
+    client.post("/api/classes", headers=header(project), json={"classes": [{"name": "Cell"}]})
     previous = identity(client)
-    def fail(*args, **kwargs):
-        raise OSError("simulated archive failure")
-    monkeypatch.setattr(app_module, "save_project_manifest", fail)
-    import pytest
-    with pytest.raises(OSError, match="simulated archive failure"):
-        app_module._start_fresh_project()
+    app_module.PROJECT_MANIFEST = None
+    app_module.PROJECT_SETTINGS = None
+    assert app_module._project_manifest() == previous
     assert identity(client) == previous

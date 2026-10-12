@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import os
@@ -44,7 +45,15 @@ from image_io import (
     ALLOWED_IMAGE_EXTENSIONS,
     _decode_cv2_bgr_image,
     _decode_pil_rgb_image,
+    _validate_decoded_image_size,
     _validate_uploaded_image_file,
+)
+from labelme_io import (
+    export_labelme,
+    image_basename,
+    import_labelme,
+    inspect_labelme,
+    labelme_review_status,
 )
 from preprocessing import (
     PREPROCESS_METHODS,
@@ -74,6 +83,7 @@ from review_io import (
     save_review,
     validate_review_status,
 )
+from sam_polygons import merge_geometries, polygon_proposals
 from sam_service import (
     SamInferenceBusyError,
     SamInferenceTimeoutError,
@@ -83,6 +93,14 @@ from sam_service import (
     sam_presets_response,
 )
 from security import apply_security_headers, is_authorized_api_request
+from segmentation_io import (
+    decode_segmentation_document,
+    load_segmentation_document,
+    manual_split_polygon,
+    normalize_geometry,
+    normalize_segmentation_document,
+    save_segmentation_document,
+)
 
 
 def _truthy_env(name, default=False):
@@ -157,7 +175,7 @@ SAM_INFERENCE_SEMAPHORE = threading.BoundedSemaphore(SAM_MAX_CONCURRENT_REQUESTS
 SAM_INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=SAM_MAX_CONCURRENT_REQUESTS)
 
 
-def _run_sam_inference_with_limits(rgb_image, sam_settings):
+def _run_sam_inference_with_limits(rgb_image, sam_settings, points=None, project_id=None, split_geometry=None):
     if not SAM_INFERENCE_SEMAPHORE.acquire(timeout=SAM_QUEUE_TIMEOUT_SECONDS):
         raise SamInferenceBusyError(
             "SAM2 inference is already running. Try again after the current request finishes."
@@ -165,6 +183,8 @@ def _run_sam_inference_with_limits(rgb_image, sam_settings):
 
     def _generate_masks():
         try:
+            if points is not None:
+                return sam_model_handler.predict_points(rgb_image, points, project_id, **({"split_geometry": split_geometry} if split_geometry is not None else {}))
             return sam_model_handler.generate_masks(rgb_image, sam_settings)
         finally:
             SAM_INFERENCE_SEMAPHORE.release()
@@ -567,25 +587,6 @@ def _stored_project_path(project_id):
     return os.path.join(_project_library_dir(), canonical + ".json")
 
 
-def _start_fresh_project():
-    """Archive the previous project before creating this server session's workspace."""
-    with PROJECT_STATE_LOCK:
-        current = _project_manifest()
-        fresh = create_project_manifest(settings=current["settings"], classes=[], **_manifest_options())
-        fresh["name"] = "New project"
-        fresh["settings"]["annotation_output_dir"] = os.path.join(
-            DEFAULT_ANNOTATION_OUTPUT_DIR, "projects", fresh["project_id"],
-        )
-        os.makedirs(_project_library_dir(), exist_ok=True)
-        save_project_manifest(
-            current, _stored_project_path(current["project_id"]), **_manifest_options(),
-        )
-        # If either write fails, do not start serving with an unexpected project.
-        # The previous active manifest and its archived copy remain recoverable.
-        _save_manifest(fresh)
-        return fresh
-
-
 @app.before_request
 def guard_project_request():
     if request.blueprint not in {"project_api", "classes_api", "annotations_api"}:
@@ -598,6 +599,8 @@ def guard_project_request():
         return jsonify({"error": "The active project changed. Reload this page before continuing."}), 409
     if request.method == "POST" and not expected and os.path.isdir(_project_library_dir()):
         return jsonify({"error": "Project identity required. Open the refined UI and reload before saving."}), 409
+    if request.blueprint == "annotations_api" and _project_manifest()["task_type"] == "instance_segmentation":
+        return jsonify({"error": "Segmentation annotation tools are not available yet. Detection annotation routes cannot be used for this project."}), 409
     return None
 
 
@@ -624,7 +627,7 @@ def projects_endpoint():
                 except (ValueError, OSError):
                     continue
         return jsonify({"active_project_id": current["project_id"], "projects": [
-            {"project_id": item["project_id"], "name": item["name"], "class_count": len(item["classes"])}
+            {"project_id": item["project_id"], "name": item["name"], "task_type": item["task_type"], "class_count": len(item["classes"])}
             for item in projects.values()
         ]})
     data = request.get_json(silent=True)
@@ -638,8 +641,12 @@ def projects_endpoint():
             reuse = data.get("reuse_classes", False)
             if not isinstance(reuse, bool):
                 raise ValueError("reuse_classes must be a boolean")
+            task_type = data.get("task_type", "bounding_box")
+            if task_type not in ("bounding_box", "instance_segmentation"):
+                raise ValueError("Choose detection or instance segmentation")
             target = create_project_manifest(
                 settings=current["settings"], classes=current["classes"] if reuse else [],
+                task_type=task_type,
                 **_manifest_options(),
             )
             target["name"] = name.strip()
@@ -678,6 +685,131 @@ def project_manifest_endpoint():
         **manifest,
         "manifest_path": _public_settings_path(_project_manifest_path()),
     })
+
+
+def _segmentation_revision(path):
+    for candidate in (path, f"{path}.bak"):
+        if os.path.isfile(candidate):
+            with open(candidate, "rb") as file:
+                return hashlib.sha256(file.read()).hexdigest()
+    return None
+
+
+@project_bp.route("/segmentation", methods=["POST"])
+def segmentation_document_endpoint():
+    manifest = _project_manifest()
+    if manifest["task_type"] != "instance_segmentation":
+        return jsonify({"error": "Open a segmentation project first."}), 409
+    if request.headers.get("X-Project-ID") != manifest["project_id"]:
+        return jsonify({"error": "Project identity is required."}), 409
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
+    try:
+        image = data.get("image")
+        if not isinstance(image, dict):
+            raise ValueError("Image identity and dimensions are required")
+        identity = image.get("identity")
+        if not isinstance(identity, str) or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+            raise ValueError("Image identity must be a SHA256 digest")
+        width, height = image.get("width"), image.get("height")
+        if type(width) is not int or type(height) is not int:
+            raise ValueError("Image dimensions must be integers")
+        _validate_decoded_image_size(width, height)
+        path = os.path.abspath(os.path.join(_annotation_dir(), f"{identity}.studio.json"))
+        # Native filenames include a full image digest; project nesting and atomic
+        # temporary filenames can exceed Windows' legacy 260-character limit.
+        if os.name == "nt" and not path.startswith("\\\\?\\"):
+            path = "\\\\?\\UNC\\" + path[2:] if path.startswith("\\\\") else "\\\\?\\" + path
+        context = {"project_id": manifest["project_id"], "image_identity": identity,
+                   "image_size": (width, height), "class_ids": [c["id"] for c in manifest["classes"]]}
+        revision = _segmentation_revision(path)
+        action = data.get("action")
+        if action == "inspect_labelme":
+            raw = data.get("labelme")
+            image_name = image_basename(data.get("image_name"))
+            if isinstance(raw, dict) and raw.get("imagePath") == _public_image_name(image_name):
+                image_name = _public_image_name(image_name)
+            inspect_labelme(raw, image, image_name)
+            return jsonify({"review_status": labelme_review_status(raw, manifest["project_id"]),
+                            "count": len(raw["shapes"])})
+        if action == "load":
+            # A class removed on another image must not invalidate saved work.
+            load_context = {**context, "class_ids": context["class_ids"] +
+                            [item["id"] for item in manifest.get("retired_classes", [])]}
+            recovered = False
+            if revision is None:
+                document = {"schema_version": 1, "task_type": "instance_segmentation",
+                            "project_id": manifest["project_id"], "image": image,
+                            "next_object_id": 1, "annotations": []}
+            else:
+                try:
+                    with open(path, encoding="utf-8") as file:
+                        document = decode_segmentation_document(json.load(file), **load_context)
+                except (OSError, ValueError):
+                    document = load_segmentation_document(path, **load_context)
+                    recovered = True
+            document = normalize_segmentation_document(document, **load_context)
+            used_ids = {item["class_id"] for item in document["annotations"]}
+            restored = [item for item in manifest.get("retired_classes", [])
+                        if item["id"] in used_ids and data.get("restore_classes") is not False]
+            if restored:
+                manifest = update_manifest_classes(manifest, manifest["classes"] + restored)
+                _save_manifest(manifest)
+            return jsonify({"document": document, "revision": revision, "recovered": recovered,
+                            "classes": manifest["classes"]})
+        if action == "import_labelme":
+            raw = data.get("labelme")
+            image_name = image_basename(data.get("image_name"))
+            if isinstance(raw, dict) and raw.get("imagePath") == _public_image_name(image_name):
+                image_name = _public_image_name(image_name)
+            labels = inspect_labelme(raw, image, image_name)
+            next_id = data.get("next_object_id")
+            if type(next_id) is not int or next_id < 1:
+                raise ValueError("next_object_id must be a positive integer")
+            if revision is not None and next_id < load_segmentation_document(path, **context)["next_object_id"]:
+                raise ValueError("Import must preserve the existing object ID counter")
+            # Plan and validate every object before persisting newly discovered classes.
+            existing_names = {item["name"] for item in manifest["classes"]}
+            updated = update_manifest_classes(manifest, manifest["classes"] +
+                                              [{"name": label} for label in labels if label not in existing_names])
+            document = import_labelme(raw, image=image, image_name=image_name,
+                                      project_id=manifest["project_id"], classes=updated["classes"], next_object_id=next_id)
+            import_context = {**context, "class_ids": [item["id"] for item in updated["classes"]]}
+            document = normalize_segmentation_document(document, **import_context)
+            if "revision" not in data or data["revision"] != revision:
+                return jsonify({"error": "Annotations changed elsewhere. Reopen the image before importing."}), 409
+            if updated != manifest:
+                _save_manifest(updated)
+            return jsonify({"document": document, "classes": updated["classes"]})
+        if action == "merge_preview":
+            return jsonify({"geometry": merge_geometries(data.get("geometries"), width, height)})
+        if action == "manual_split_preview":
+            return jsonify({"geometries": manual_split_polygon(data.get("geometry"), data.get("start"),
+                           data.get("end"), data.get("points"), width, height)})
+        if action not in ("validate", "save", "export_labelme"):
+            raise ValueError("Choose load, validate, save, import_labelme or export_labelme")
+        document = normalize_segmentation_document(data.get("document"), **context)
+        if action == "export_labelme":
+            image_name = _public_image_name(image_basename(data.get("image_name")))
+            return jsonify({"labelme": export_labelme(document, manifest["classes"], image_name)})
+        if action == "validate":
+            return jsonify({"document": document})
+        if "revision" not in data or data["revision"] != revision:
+            return jsonify({"error": "Annotations changed elsewhere. Reopen the image before saving; your local edits are still available."}), 409
+        if revision is not None:
+            previous = load_segmentation_document(path, **context)
+            if document["next_object_id"] < previous["next_object_id"]:
+                raise ValueError("next_object_id must not decrease")
+        invalidate_review(path)
+        image_name = _public_image_name(image_basename(data.get("image_name") or "image.png"))
+        saved = save_segmentation_document(path, document, classes=manifest["classes"], image_path=image_name, **context)
+        return jsonify({"document": saved, "revision": _segmentation_revision(path)})
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except OSError:
+        app.logger.exception("Could not access native segmentation storage")
+        return jsonify({"error": "Could not access segmentation annotations. Your edits have not been saved."}), 500
 
 @project_bp.route("/settings", methods=["GET", "POST"])
 def project_settings_endpoint():
@@ -996,6 +1128,15 @@ def save_annotations_endpoint():
 
 @sam_bp.route("/run_sam", methods=["POST"])
 def run_sam_endpoint():
+    polygon_output = request.form.get("output") == "polygons"
+    prompted = "points" in request.form
+    if "split_geometry" in request.form and not prompted:
+        return jsonify({"error": "Split requires include points."}), 400
+    project_id = _project_manifest()["project_id"]
+    if prompted and (not polygon_output or request.headers.get("X-Project-ID") != project_id):
+        return jsonify({"error": "Point prompts require the current segmentation project."}), 409
+    if polygon_output and _project_manifest()["task_type"] != "instance_segmentation":
+        return jsonify({"error": "Open a segmentation project first."}), 409
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
     if not sam_model_handler.is_ready():
@@ -1015,7 +1156,44 @@ def run_sam_endpoint():
         bgr_image, preprocess_info = _apply_optional_preprocessing_for_sam(bgr_image, request.form)
         rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
         sam_settings = normalize_sam_settings(raw_sam_settings or _project_settings().get("sam_settings"))
-        filtered_masks = _run_sam_inference_with_limits(rgb_image, sam_settings)
+        if prompted:
+            try:
+                points = json.loads(request.form["points"])
+            except json.JSONDecodeError:
+                raise ValueError("points must be valid JSON") from None
+            height, width = rgb_image.shape[:2]
+            if (not isinstance(points, list) or not 1 <= len(points) <= 64
+                    or any(not isinstance(point, list) or len(point) != 3
+                           or any(type(value) not in (int, float) for value in point)
+                           or type(point[2]) is not int or point[2] not in (0, 1)
+                           or not (0 <= point[0] < width and 0 <= point[1] < height) for point in points)
+                    or not any(point[2] == 1 for point in points)):
+                raise ValueError("Provide 1–64 valid in-image points [x, y, 0 or 1], including an include point.")
+            split_geometry = None
+            if "split_geometry" in request.form:
+                try:
+                    split_geometry = json.loads(request.form["split_geometry"])
+                except json.JSONDecodeError:
+                    raise ValueError("split_geometry must be valid JSON") from None
+                split_geometry, _, _ = normalize_geometry(split_geometry, width, height)
+                if not 2 <= len(points) <= 16 or any(point[2] != 1 for point in points):
+                    raise ValueError("Split needs 2–16 include clicks.")
+            filtered_masks = _run_sam_inference_with_limits(rgb_image, sam_settings, points, project_id,
+                **({"split_geometry": split_geometry} if split_geometry is not None else {}))
+        else:
+            filtered_masks = _run_sam_inference_with_limits(rgb_image, sam_settings)
+        if polygon_output:
+            height, width = rgb_image.shape[:2]
+            proposals, skipped = polygon_proposals(filtered_masks, width, height)
+            if prompted and "split_geometry" in request.form and (skipped or len(proposals) != len(points)):
+                return jsonify({"error": "Could not create a valid outline for every cell. Undo or reposition a click."}), 422
+            if prompted and not proposals:
+                return jsonify({"error": "No editable outline found. Add or undo a click; masks with holes or disconnected pieces are not supported yet."}), 422
+            return jsonify({
+                "proposals": proposals, "skipped": skipped,
+                "image": {"identity": hashlib.sha256(image_stream).hexdigest(), "width": width, "height": height},
+                "sam_settings": sam_settings, "preprocess": preprocess_info,
+            })
         return jsonify({
             "masks": filtered_masks,
             "sam_settings": sam_settings,
@@ -1051,7 +1229,7 @@ _register_blueprints(app)
 if __name__ == "__main__":
     from waitress import create_server
 
-    # Bind first: a duplicate launch must not reset an already-running project.
+    # Bind first, then reopen the active project. New projects are explicit UI actions.
     server = create_server(
         app,
         host=os.environ.get("APP_HOST", "127.0.0.1"),
@@ -1060,7 +1238,7 @@ if __name__ == "__main__":
         max_request_body_size=app.config["MAX_CONTENT_LENGTH"],
     )
     try:
-        _start_fresh_project()
+        _project_manifest()
         server.run()
     finally:
         server.close()

@@ -109,7 +109,26 @@
         retinex_strength: 0.55
     };
 
+    function generateClassColor(index, usedColors) {
+        const used = new Set(Array.from(usedColors, color => String(color).toLowerCase()));
+        while (true) {
+            let color = CLASS_COLOR_PALETTE[index];
+            if (!color) {
+                const hue = (index * 0.618033988749895) % 1;
+                const saturation = 0.60 + (index % 3) * 0.10;
+                const value = 0.80 + (Math.floor(index / 3) % 3) * 0.08;
+                const sector = Math.floor(hue * 6), fraction = hue * 6 - sector;
+                const p = value * (1 - saturation), q = value * (1 - fraction * saturation), t = value * (1 - (1 - fraction) * saturation);
+                const rgb = [[value,t,p],[q,value,p],[p,value,t],[p,q,value],[t,p,value],[value,p,q]][sector % 6];
+                color = '#' + rgb.map(channel => Math.round(channel * 255).toString(16).padStart(2, '0')).join('');
+            }
+            if (!used.has(color.toLowerCase())) return color;
+            index++;
+        }
+    }
+
     window.SAM2FrontendConfig = {
+        generateClassColor,
         DEFAULT_CLASSES,
         ANNOTATION_FORMATS,
         CLASS_COLOR_PALETTE,

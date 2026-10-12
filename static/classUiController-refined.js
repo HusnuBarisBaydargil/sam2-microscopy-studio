@@ -43,7 +43,7 @@
         if (classes.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'class-empty-state';
-            empty.textContent = 'Name the objects you want to annotate. No classes are supplied automatically.';
+            empty.textContent = 'No classes yet';
             classManager.appendChild(empty);
         }
 
@@ -64,25 +64,35 @@
             name.className = 'class-display-name';
             name.textContent = cls.name;
             const key = document.createElement('kbd');
-            const reserved = window.SAM2ClassManager.isReservedHotkey(cls.hotkey);
+            const reserved = window.SAM2ClassManager.isReservedHotkey(cls.hotkey, refs.reservedHotkeys);
             key.textContent = cls.hotkey ? `${cls.hotkey.toUpperCase()}${reserved ? ' reserved' : ''}` : '';
             if (reserved) key.title = 'This shortcut belongs to an app tool. Edit or clear it.';
             selectButton.append(swatch, name, key);
             row.appendChild(selectButton);
-            const editor = document.createElement('details');
+            const editor = document.createElement('div');
             editor.className = 'class-editor';
             editor.open = openEditors.has(row.dataset.classId);
-            const edit = document.createElement('summary');
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'class-edit-btn';
             const updateEditorToggle = () => {
-                edit.textContent = editor.open ? '×' : 'Edit';
+                if (editor.open) editor.setAttribute('open', '');
+                else editor.removeAttribute('open');
+                edit.textContent = editor.open ? 'Done' : 'Edit';
                 edit.setAttribute('aria-label', `${editor.open ? 'Close editor for' : 'Edit class'} ${cls.name}`);
+                edit.setAttribute('aria-expanded', String(editor.open));
                 edit.title = editor.open ? 'Close class editor' : 'Edit class';
             };
             updateEditorToggle();
-            editor.addEventListener('toggle', updateEditorToggle);
             editor.appendChild(edit);
             const fields = document.createElement('div');
             fields.className = 'class-editor-fields';
+            fields.hidden = !editor.open;
+            edit.onclick = () => {
+                editor.open = !editor.open;
+                fields.hidden = !editor.open;
+                updateEditorToggle();
+            };
 
             const colorInput = document.createElement('input');
             colorInput.type = 'color';
@@ -105,7 +115,7 @@
             hotkeyInput.value = cls.hotkey ? cls.hotkey.toUpperCase() : '';
             hotkeyInput.placeholder = '-';
             hotkeyInput.maxLength = 1;
-            hotkeyInput.title = 'Optional shortcut; B (Manual Box) and U (Undo) are reserved.';
+            hotkeyInput.title = refs.shortcutHelp || 'Optional shortcut; B (Manual Box) and U (Undo) are reserved.';
             hotkeyInput.setAttribute('aria-invalid', String(reserved));
             hotkeyInput.setAttribute('aria-label', `Shortcut for ${cls.name}`);
 
@@ -114,13 +124,14 @@
             hotkeyField.title = 'Optional keyboard shortcut';
 
             const hotkeyLabel = document.createElement('span');
-            hotkeyLabel.textContent = 'Hotkey';
+            hotkeyLabel.textContent = 'Shortcut';
 
             const deleteButton = document.createElement('button');
             deleteButton.type = 'button';
             deleteButton.className = 'btn btn-secondary class-delete-btn';
-            deleteButton.textContent = 'Remove class';
-            deleteButton.title = `Remove ${cls.name} from the class list; annotations are preserved`;
+            deleteButton.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+            deleteButton.title = `Delete ${cls.name}`;
+            deleteButton.setAttribute('aria-label', `Delete class ${cls.name}`);
 
             hotkeyField.appendChild(hotkeyLabel);
             hotkeyField.appendChild(hotkeyInput);
@@ -128,9 +139,9 @@
             fields.appendChild(colorInput);
             fields.appendChild(nameInput);
             fields.appendChild(hotkeyField);
-            fields.appendChild(deleteButton);
             editor.appendChild(fields);
             row.appendChild(editor);
+            if (refs.allowClassRemoval !== false) row.appendChild(deleteButton);
             classManager.appendChild(row);
         });
 

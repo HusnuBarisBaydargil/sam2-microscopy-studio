@@ -34,12 +34,15 @@
         return apiFetch(apiPath('/api/preprocess'), { method: 'POST', body: formData });
     }
 
-    function runSam({ file, imageName, samSettings, preprocessMethod, preprocessParams }) {
+    function runSam({ file, imageName, samSettings, preprocessMethod, preprocessParams, output, points, splitGeometry }) {
         const formData = new FormData();
         formData.append('image', file, imageName);
         formData.append('sam_settings', JSON.stringify(samSettings));
         formData.append('preprocess_method', preprocessMethod);
         formData.append('preprocess_params', JSON.stringify(preprocessParams));
+        if (output) formData.append('output', output);
+        if (points) formData.append('points', JSON.stringify(points));
+        if (splitGeometry) formData.append('split_geometry', JSON.stringify(splitGeometry));
         return apiFetch(apiPath('/api/run_sam'), { method: 'POST', body: formData });
     }
 

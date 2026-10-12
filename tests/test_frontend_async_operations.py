@@ -56,7 +56,7 @@ const starts = [...source.matchAll(/^    (?:async )?function (\w+)\(/gm)];
 const selected = new Set(['beginAnnotationOperation', 'handleRunSam', 'setLoader',
     'currentCandidates', 'currentAnnotations', 'currentImageId', 'initializeImageState',
     'loadServerAnnotationsForCurrentImage', 'saveImageAnnotationsToServer',
-    'applyLoadedAnnotations', 'setAnnotationsForImage', 'selectImageByIndex',
+    'applyLoadedAnnotations', 'setAnnotationsForImage', 'selectImageByIndex', 'rememberDetectionWorkspace',
     'handleApplyPreprocess', 'loadImageRecord', 'handleLoadAnnotationFile',
     'handleSaveAllServerAnnotations', 'handleSetAnnotationDir', 'handleReviewImage',
     'handleLoadMatchedAnnotations']);

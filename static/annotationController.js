@@ -388,6 +388,20 @@
         };
     }
 
+    function deleteClassFromImage(classes, annotations, history, redoHistory, index) {
+        const item = classes[index];
+        if (!item) return 0;
+        const annotationRecords = annotations.flatMap((annotation, position) => annotation.class === item.name
+            ? [{ index: position, item: structuredClone(annotation) }] : []);
+        recordHistoryCommand(history, redoHistory, { type: 'compound', commands: [
+            { type: 'delete_annotations', annotationRecords, candidateRecords: [] },
+            { type: 'remove_class', classRecord: { index, item: structuredClone(item) } }
+        ] });
+        removeRecordedItems(annotations, annotationRecords);
+        classes.splice(index, 1);
+        return annotationRecords.length;
+    }
+
     window.SAM2AnnotationController = {
         annotationFromCandidate,
         convertSelectedCandidates,
@@ -403,6 +417,7 @@
         countAnnotationsWithClass,
         countOtherImageAnnotationsWithClass,
         renameAnnotationClass,
-        deleteAnnotationsWithClass
+        deleteAnnotationsWithClass,
+        deleteClassFromImage
     };
 })();

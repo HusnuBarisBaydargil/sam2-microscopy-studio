@@ -5,6 +5,7 @@ import pytest
 
 from project_manifest import (
     PROJECT_MANIFEST_SCHEMA_VERSION,
+    create_project_manifest,
     load_or_create_project_manifest,
     save_project_manifest,
     update_manifest_classes,
@@ -17,6 +18,18 @@ def manifest_options(tmp_path):
         "default_annotation_output_dir": "annotations",
         "allow_absolute_annotation_dir": False,
     }
+
+
+def test_segmentation_project_round_trip_and_detection_default(tmp_path):
+    options = manifest_options(tmp_path)
+    assert create_project_manifest(**options)["task_type"] == "bounding_box"
+    manifest = create_project_manifest(task_type="instance_segmentation", **options)
+    assert manifest["classes"] == []
+    path = tmp_path / "segmentation.json"
+    save_project_manifest(manifest, path, **options)
+    assert load_or_create_project_manifest(path, **options) == manifest
+    with pytest.raises(ValueError, match="task_type"):
+        create_project_manifest(task_type="unknown", **options)
 
 
 def test_manifest_migrates_legacy_state_and_preserves_identity(tmp_path):

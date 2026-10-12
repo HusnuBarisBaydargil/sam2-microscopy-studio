@@ -1,3 +1,4 @@
+import colorsys
 import csv
 import json
 import os
@@ -27,7 +28,6 @@ def _positive_int_env(name, default):
 
 
 MAX_ANNOTATIONS_PER_SAVE = _positive_int_env("MAX_ANNOTATIONS_PER_SAVE", 100000)
-MAX_CLASSES_PER_PROJECT = _positive_int_env("MAX_CLASSES_PER_PROJECT", 500)
 MAX_CLASS_NAME_LENGTH = _positive_int_env("MAX_CLASS_NAME_LENGTH", 128)
 MAX_BBOX_ABS_VALUE = float(_positive_int_env("MAX_BBOX_ABS_VALUE", 1000000000))
 
@@ -41,6 +41,22 @@ DEFAULT_CLASS_COLORS = [
     "#56d4dd",
     "#ffa657",
 ]
+
+
+def generate_class_color(index, used_colors):
+    """Extend the starter palette with spaced hues, avoiding assigned RGB colors."""
+    while True:
+        if index < len(DEFAULT_CLASS_COLORS):
+            color = DEFAULT_CLASS_COLORS[index]
+        else:
+            hue = (index * 0.618033988749895) % 1
+            saturation = 0.60 + (index % 3) * 0.10
+            value = 0.80 + ((index // 3) % 3) * 0.08
+            rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+            color = "#" + "".join(f"{int(channel * 255 + 0.5):02x}" for channel in rgb)
+        if color.lower() not in used_colors:
+            return color
+        index += 1
 
 
 def _spreadsheet_safe_cell(value):
@@ -88,7 +104,8 @@ def _normalize_classes(raw_classes):
     normalized_classes = []
     seen_names = set()
     seen_ids = set()
-    for item in raw_classes[:MAX_CLASSES_PER_PROJECT]:
+    used_colors = {str(item.get("color", "")).lower() for item in raw_classes if isinstance(item, dict)}
+    for item in raw_classes:
         if not isinstance(item, dict):
             continue
         try:
@@ -97,7 +114,8 @@ def _normalize_classes(raw_classes):
             continue
         if not name or name in seen_names:
             continue
-        color = _normalize_class_color(item.get("color"))
+        color = _normalize_class_color(item.get("color")) if item.get("color") else generate_class_color(len(normalized_classes), used_colors)
+        used_colors.add(color.lower())
         hotkey = _normalize_hotkey(item.get("hotkey"))
         class_info = {"name": name, "color": color, "hotkey": hotkey}
         class_id = item.get("id")
@@ -114,10 +132,9 @@ def _classes_with_annotation_labels(raw_classes, annotations):
     classes = _normalize_classes(raw_classes)
     seen_names = {class_info["name"] for class_info in classes}
     used_hotkeys = {class_info["hotkey"] for class_info in classes if class_info.get("hotkey")}
+    used_colors = {class_info["color"].lower() for class_info in classes}
 
     for annotation in annotations:
-        if len(classes) >= MAX_CLASSES_PER_PROJECT:
-            break
         try:
             class_name = _normalize_class_name(annotation.get("class"))
         except ValueError:
@@ -133,9 +150,11 @@ def _classes_with_annotation_labels(raw_classes, annotations):
 
         if hotkey:
             used_hotkeys.add(hotkey)
+        color = generate_class_color(len(classes), used_colors)
+        used_colors.add(color.lower())
         classes.append({
             "name": class_name,
-            "color": DEFAULT_CLASS_COLORS[len(classes) % len(DEFAULT_CLASS_COLORS)],
+            "color": color,
             "hotkey": hotkey,
         })
         seen_names.add(class_name)

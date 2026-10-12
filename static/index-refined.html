@@ -11,6 +11,9 @@
         <header class="top-bar">
             <div class="top-brand">
                 <h1>Microscopy Studio</h1>
+                <span id="activeProjectMode" class="project-mode-badge">Detection</span>
+                <button id="manageProjectsBtn" type="button" disabled class="btn btn-secondary">Projects</button>
+                <span id="projectResumeBar" class="project-resume-bar" hidden><span id="projectResumeText" role="status"></span><button id="resumeProjectFolder" type="button" class="btn btn-secondary">Reconnect folder</button></span>
             </div>
             <div class="top-action-group top-load-actions">
                 <span class="top-action-label">Load</span>
@@ -24,7 +27,6 @@
             <details id="projectExportMenu" class="top-action-group top-save-actions">
                 <summary class="btn btn-secondary" aria-controls="projectExportPanel">Project &amp; export</summary>
                 <div id="projectExportPanel" class="project-export-popup" role="region" aria-label="Project and export actions">
-                <button id="manageProjectsBtn" type="button" disabled class="btn btn-secondary">New / Open project</button>
                 <div class="top-action-controls">
 
                     <button id="saveAllServerBtn" class="btn btn-secondary" disabled>Save all</button>
@@ -50,6 +52,128 @@
             </div>
         </header>
 
+        <section id="segmentationProjectNotice" hidden aria-labelledby="segmentationProjectHeading">
+            <header class="polygon-header"><div><h2 id="segmentationProjectHeading">Project</h2><span id="polygonImageName"></span></div><span id="polygonSaveState" role="status" aria-live="polite">No image loaded</span><div><button id="segmentationNewProjectBtn" class="btn btn-secondary" type="button">New project</button> <button id="segmentationProjectsBtn" class="btn btn-secondary" type="button">Open project</button></div></header>
+            <div id="polygonEditor">
+                <div class="polygon-layout">
+                    <aside aria-label="Images and SAM2">
+                        <details id="polygonFileMenu" class="polygon-file-menu"><summary class="btn btn-secondary">Files &amp; annotations</summary>
+                            <div class="polygon-file-actions">
+                                <button id="polygonOpen" class="btn btn-secondary" type="button">Open images</button><input id="polygonFiles" type="file" multiple hidden>
+                                <button id="polygonOpenFolder" class="btn btn-secondary" type="button">Open folder</button><input id="polygonFolder" type="file" webkitdirectory directory multiple hidden>
+                                <button id="polygonImportLabelme" class="btn btn-secondary" type="button" disabled>Import annotation</button><input id="polygonLabelmeFile" type="file" accept=".json,application/json" hidden>
+                                <button id="polygonExportLabelme" class="btn btn-secondary" type="button" disabled>Download annotation</button>
+                            </div>
+                        </details>
+                        <h3>Images</h3><select id="polygonImageList" class="form-control" aria-label="Image to annotate" disabled></select>
+                        <div class="polygon-review-progress"><progress id="polygonReviewProgress" value="0" max="1" aria-label="Image review progress"></progress><span id="polygonReviewCount" role="status">0 / 0 reviewed</span></div>
+                        <div id="polygonQueueFilters" class="polygon-queue-filters" role="group" aria-label="Filter images"><button type="button" class="btn btn-secondary" data-filter="all" aria-pressed="true">All</button><button type="button" class="btn btn-secondary" data-filter="needs_review" aria-pressed="false">Needs review</button><button type="button" class="btn btn-secondary" data-filter="completed" aria-pressed="false">Reviewed</button></div>
+                        <div id="polygonImageQueue" aria-label="Image review queue" role="region" tabindex="0"></div><p id="polygonQueueEmpty" hidden>No matching images</p>
+                        <details class="polygon-sam-settings"><summary>SAM2 settings</summary>
+                        <label for="polygonSamPreset">Search mode</label><select id="polygonSamPreset" class="form-control"><option value="fast_preview">Quick preview</option><option value="general_balanced">Balanced</option><option value="small_image_512">Small cells / small images</option><option value="high_recall">Thorough · slower</option></select>
+                        <p id="polygonSamDetails" role="status"></p></details>
+                        <details class="polygon-processing"><summary>Image processing</summary>
+                        <label for="polygonPreprocessMethod">Method</label><select id="polygonPreprocessMethod" class="form-control"></select>
+                        <details><summary>Adjust settings</summary><div id="polygonPreprocessParams">
+                            <label data-methods="clahe clahe_unsharp">CLAHE clip limit<input class="form-control" data-param="clahe_clip_limit" type="number" min="0.5" max="8" step="0.1"></label>
+                            <label data-methods="clahe clahe_unsharp">CLAHE tile grid<input class="form-control" data-param="clahe_tile_grid_size" type="number" min="2" max="32" step="1"></label>
+                            <label data-methods="gamma gamma_unsharp">Gamma<input class="form-control" data-param="gamma" type="number" min="0.2" max="3" step="0.1"></label>
+                            <label data-methods="clahe_unsharp gamma_unsharp">Sharpening amount<input class="form-control" data-param="unsharp_amount" type="number" min="0" max="3" step="0.1"></label>
+                            <label data-methods="clahe_unsharp gamma_unsharp">Sharpening radius<input class="form-control" data-param="unsharp_radius" type="number" min="0.3" max="6" step="0.1"></label>
+                            <label data-methods="clahe_unsharp gamma_unsharp">Sharpening threshold<input class="form-control" data-param="unsharp_threshold" type="number" min="0" max="255" step="1"></label>
+                            <label data-methods="retinex_mild">Retinex strength<input class="form-control" data-param="retinex_strength" type="number" min="0.1" max="1" step="0.05"></label>
+                        </div><button id="polygonPreprocessDefaults" class="btn btn-secondary" type="button">Reset settings</button></details>
+                        <button id="polygonPreprocessApply" class="btn btn-secondary" type="button" disabled>Apply</button>
+                        <button id="polygonPreprocessRestore" class="btn btn-secondary" type="button" disabled>Restore original</button>
+                        <p id="polygonPreprocessActive" role="status">Original image</p><p>Applied processing affects the preview and SAM2 input. Source image and polygons stay unchanged.</p>
+                        </details>
+                    </aside>
+                    <div class="polygon-workspace">
+                        <div class="polygon-toolbar" role="group" aria-label="Annotation tools">
+                            <div class="polygon-tool-group" role="group" aria-label="Drawing">
+                                <button id="polygonSelect" class="btn btn-secondary shape-tool" type="button" title="Select and edit objects" aria-pressed="true" disabled>Select</button>
+                                <button id="polygonDraw" class="btn btn-primary shape-tool" type="button" title="Click vertices; Enter finishes (1)" aria-keyshortcuts="1" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="3,16 5,4 15,2 21,12 14,21"/></svg><span>Polygon (1)</span></button>
+                                <button id="polygonRectangle" class="btn btn-primary shape-tool" type="button" title="Click two opposite corners (2)" aria-keyshortcuts="2" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14"/></svg><span>Rectangle (2)</span></button>
+                                <button id="polygonCircle" class="btn btn-primary shape-tool" type="button" title="Click center, then edge (3)" aria-keyshortcuts="3" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Circle (3)</span></button>
+                                <button id="polygonPromptStart" class="btn btn-secondary shape-tool" type="button" title="Click inside a new object to segment it" disabled>Click segment</button>
+                                <button id="polygonSamRun" class="btn btn-primary" type="button" title="Generate SAM2 suggestions for this image" disabled>Suggest</button>
+                            </div>
+                            <div class="polygon-tool-group" role="group" aria-label="Edit history">
+                                <button id="polygonUndo" class="btn btn-secondary" type="button" title="Undo last polygon point or annotation action (Ctrl+Z)" disabled>Undo</button>
+                                <button id="polygonRedo" class="btn btn-secondary" type="button" title="Redo last action (Ctrl+Shift+Z)" disabled>Redo</button>
+                            </div>
+                            <div class="polygon-tool-group polygon-view-tools" role="group" aria-label="View">
+                                <details id="polygonViewMenu" class="polygon-view-menu"><summary title="Overlay visibility">View</summary><div class="polygon-view-options">
+                                    <label><input id="polygonShowObjects" type="checkbox" checked> Saved objects</label>
+                                    <label><input id="polygonShowSuggestions" type="checkbox" checked> SAM2 suggestions</label>
+                                    <label><input id="polygonShowNumbers" type="checkbox" checked> Suggestion numbers</label>
+                                    <label><input id="polygonOutlineOnly" type="checkbox" checked> Outlines only</label>
+                                    <button id="polygonFit" class="btn btn-secondary" type="button" title="Fit and center image; drag the background to pan, scroll to zoom">Fit image</button></div></details><span id="polygonZoomLabel">100%</span>
+                            </div>
+                        </div>
+                        <div class="polygon-edit-context" aria-label="Current editing mode">
+                            <span id="polygonModeState" role="status" aria-live="polite">Select</span>
+                            <div id="polygonSelectionActions" class="polygon-tool-group" role="group" aria-label="Selected object actions" hidden>
+                                <button id="polygonRelabel" class="btn btn-secondary" type="button" title="Change the selected object's class" disabled>Class</button>
+                                <button id="polygonCorrect" class="btn btn-secondary" type="button" disabled>Correct</button>
+                                <button id="polygonLocalCorrect" class="btn btn-secondary" type="button" disabled>Redraw edge</button>
+                                <button id="polygonSplit" class="btn btn-secondary" type="button" title="Select one object or suggestion, then click each cell" disabled>Split</button>
+                                <button id="polygonManualSplit" class="btn btn-secondary" type="button" disabled>Cut line</button>
+                                <button id="polygonMerge" class="btn btn-secondary" type="button" title="Select objects to merge" disabled>Merge</button>
+                                <button id="polygonDelete" class="btn btn-secondary" type="button" title="Delete selected object (Delete); Ctrl+Z restores it" aria-keyshortcuts="Delete" disabled>Delete</button>
+                            </div>
+                            <button id="polygonFinish" class="btn btn-primary" type="button" hidden disabled>Finish (Enter)</button>
+                            <button id="polygonCancel" class="btn btn-secondary" type="button" hidden disabled>Cancel (Esc)</button>
+                            <div id="polygonLocalBar" class="polygon-prompt-bar" role="group" aria-label="Local boundary correction" hidden>
+                                <button id="polygonLocalUndo" class="btn btn-secondary" type="button" title="Undo the last replacement point or anchor (Ctrl+Z)">Undo point</button>
+                                <button id="polygonLocalSide" class="btn btn-secondary" type="button" title="Replace the other boundary section between the anchors" aria-pressed="false">Other side</button>
+                                <button id="polygonLocalCompare" class="btn btn-secondary" type="button" title="Compare with the original outline" aria-pressed="false">Original</button>
+                                <button id="polygonLocalApply" class="btn btn-primary" type="button" title="Apply this boundary replacement (Enter)">Apply edge</button>
+                                <button id="polygonLocalCancel" class="btn btn-secondary" type="button" title="Discard this correction (Escape)">Cancel</button>
+                            </div>
+                            <div id="polygonPromptBar" class="polygon-prompt-bar" role="group" aria-label="Click-assisted SAM2" hidden>
+                                <span id="polygonPromptHint"></span>
+                                <button id="polygonPromptInclude" class="btn btn-secondary" type="button" aria-pressed="true" title="Click inside the object">+ Include</button>
+                                <button id="polygonPromptExclude" class="btn btn-secondary" type="button" aria-pressed="false" title="Click unwanted areas; right-click also excludes">− Exclude</button>
+                                <button id="polygonPromptUndo" class="btn btn-secondary" type="button" title="Undo the last prompt (Ctrl+Z)">Undo click</button>
+                                <button id="polygonPromptCompare" class="btn btn-secondary" type="button" title="Show the original boundary without the preview" aria-pressed="false" hidden>Original</button>
+                                <select id="polygonPromptClass" class="form-control" aria-label="Class for click-assisted object"></select>
+                                <button id="polygonPromptAccept" class="btn btn-primary" type="button">Accept preview</button>
+                                <button id="polygonPromptCancel" class="btn btn-secondary" type="button">Cancel</button>
+                            </div>
+                        </div>
+                            <div id="polygonSamReview" class="polygon-tool-group polygon-sam-actions" role="group" aria-label="Selected suggestions" hidden>
+                                <span id="polygonSamInfo" role="status"></span>
+                                <select id="polygonSamClass" class="form-control" aria-label="Class for selected suggestions" title="Class for selected suggestions"></select>
+                                <button id="polygonSamAccept" class="btn btn-primary" type="button" disabled>Accept selected</button>
+                                <button id="polygonSamReject" class="btn btn-secondary" type="button" title="Remove selected suggestions; Undo restores them" disabled>Reject</button>
+                                <button id="polygonSamClear" class="btn btn-secondary" type="button" title="Deselect suggestions (Esc); keep all suggestions" disabled>Deselect</button>
+                                <button id="polygonSamClearSuggestions" class="btn btn-secondary" type="button" title="Clear pending suggestions; accepted annotations are preserved" disabled>Clear suggestions</button>
+                            </div>
+                        <div class="polygon-stage"><svg id="polygonCanvas" hidden viewBox="0 0 640 480" role="img" aria-label="Image and shape annotations"><image id="polygonImage" x="0" y="0"/><g id="polygonProposals"></g><g id="polygonShapes"></g><g id="polygonProposalBadges"></g><g id="polygonPromptLayer" pointer-events="none"></g></svg><p id="polygonEmpty">Choose Files &amp; annotations to open images or a folder.</p></div>
+                        <footer class="polygon-review-footer" aria-label="Review current image"><div class="polygon-navigation"><button id="polygonPrevious" class="btn btn-secondary" type="button" aria-label="Previous image" disabled>←</button><span id="polygonPosition">0 / 0</span><button id="polygonNext" class="btn btn-secondary" type="button" aria-label="Next image" disabled>→</button></div><span id="polygonReviewState" role="status">No image</span><div class="polygon-review-actions"><button id="polygonSave" class="btn btn-secondary" type="button" disabled hidden>Save now</button><button id="polygonReopenReview" class="btn btn-secondary" type="button" hidden>Reopen review</button><button id="polygonReviewNext" class="btn btn-primary" type="button" disabled>Mark reviewed &amp; next</button></div></footer>
+                    </div>
+                    <aside aria-label="Objects and classes"><h3>Objects <span id="polygonObjectCount"></span></h3><div id="polygonObjectList" role="region" aria-label="Saved objects" tabindex="0"></div>
+                        <h3>Classes</h3><label for="polygonClass">New objects</label><select id="polygonClass" class="form-control"></select>
+                        <div class="polygon-class-actions">
+                            <details id="polygonClassSettings" class="polygon-class-settings">
+                                <summary>Manage classes</summary>
+                                <input id="polygonClassSearch" type="search" class="form-control" placeholder="Find a class" aria-label="Search segmentation classes">
+                                <div id="polygonClassSearchEmpty" hidden>No classes match this search.</div>
+                                <div id="polygonClassManager" class="class-manager"></div>
+                            </details>
+                            <button id="polygonAddClass" class="btn btn-secondary class-add-btn" type="button">Add class</button>
+                        </div>
+                        <form id="polygonClassForm" class="quick-class-row" hidden><label for="polygonClassName">New class</label><input id="polygonClassName" class="form-control" maxlength="128" required><button class="btn btn-secondary" type="submit">Create class</button></form>
+                    </aside>
+                </div>
+                <div id="polygonLabelPicker" class="polygon-label-picker" role="dialog" aria-labelledby="polygonLabelHeading" hidden>
+                    <div class="polygon-label-heading"><strong id="polygonLabelHeading">Change class</strong><button id="polygonLabelClose" class="btn btn-secondary" type="button" aria-label="Close class picker">×</button></div>
+                    <div id="polygonLabelChoices"></div>
+                </div>
+                <div id="polygonStatus" role="status" aria-live="polite" hidden></div>
+            </div>
+        </section>
         <aside id="projectPanel" class="side-panel project-panel" aria-label="Images and SAM2 settings">
             <section class="card">
                 <h3>Image Queue</h3>
@@ -84,7 +208,7 @@
                     </summary>
                     <div class="project-settings-panel">
                         <div class="scope-helper-text">Matches annotation files across all loaded images.</div>
-                        <label for="annotationDirInput">Folder</label>
+                        <label for="annotationDirInput">Legacy import folder (not the save destination)</label>
                         <div class="annotation-dir-row">
                             <input type="text" id="annotationDirInput" class="form-control" placeholder="annotations">
                             <button id="setAnnotationDirBtn" class="btn btn-secondary">Set</button>
@@ -440,7 +564,7 @@
                 <h3>Basic Workflow</h3>
                 <ol>
                     <li><b>Load Image:</b> Use the "Load Image" button to open a valid image file (`.tif`, `.jpg`, etc.).</li>
-                    <li><b>Annotation folder:</b> Set the server folder and format for CSV, YOLO, COCO, or Pascal VOC annotations, then use Check Matches to scan the opened images.</li>
+                    <li><b>Annotation folder:</b> Open folder grants access to save beside source images. The server folder setting is only for importing older annotations.</li>
                     <li><b>Classes:</b> New projects start without classes. Add a class manually or import annotations with class labels.</li>
                     <li><b>Annotation source:</b> Use the server folder path, or load local annotation files/folders to match against the opened images in the browser.</li>
                     <li><b>Generate SAM2 candidates:</b> Click this to run or re-run the AI model on the server. Re-runs replace current candidates and can keep existing annotations.</li>
@@ -459,6 +583,23 @@
                     <li><b>Nudge:</b> Select boxes and use arrow keys. Hold Shift for larger moves.</li>
                 </ul>
 
+                <h3>Segmentation classes</h3>
+                <p>New objects sets the class used for drawing and suggestions. Select an object and use its class button above the canvas to change that object's class. Expand Manage classes to search the class list; use Edit beside a class to change its name, color, or shortcut.</p>
+                <h3>Segmentation drawing</h3>
+                <p>Polygon (1): click vertices and press Enter. Rectangle (2): click opposite corners. Circle (3): click the center, then its edge. Drag a saved shape's handles to adjust it. Right-click a polygon corner to remove it, or focus the corner with Tab and press Delete/Backspace. Polygons need at least three points. Ctrl+Z removes the last draft point or undoes a completed edit or SAM2 run; Escape cancels drawing.</p>
+                <p>Hold the middle mouse button and drag to pan, including while drawing. Left-drag a point in an unfinished polygon to adjust it. Overlapping points are highlighted as soon as you place or drop them; move a highlighted point to fix it without restarting. Escape during a point drag restores its previous position.</p>
+                <h3>Click-assisted SAM2</h3>
+                <p>Click segment creates a new object. To correct an existing object or suggestion, select it and choose Correct above the canvas. The original boundary is dashed white; the preview is gold. Original toggles the preview for comparison. Use Exclude or right-click to remove unwanted areas. Undo click (Ctrl+Z) removes the last prompt. Apply correction or Accept preview saves one undoable edit; Cancel or Escape discards the preview. Applied image processing is used.</p>
+                <h3>Split and Merge</h3>
+                <p>For Split, select one saved object or suggestion, then click once per cell (2–16 cells). Undo click removes the last seed. For Merge, toggle saved objects in the list, or select suggestions before starting. Choose the output class beside Accept. Both operations show a preview first; acceptance autosaves one undoable edit. Split stays inside the original outline and may exclude background. Merge needs touching or overlapping regions forming one outline without holes; it does not bridge gaps. Boundaries use source-image pixels and up to two-pixel simplification. New objects receive new IDs; Undo restores the original objects.</p>
+                <p>For a manual split, select a saved polygon and choose Cut line. Pick two boundary anchors, optionally add points to bend the cut, then Apply split. The cut must stay inside the original outline. Both pieces retain the parent's class and exact outer boundary, receive new IDs, and autosave as one undoable edit. Ctrl+Z removes draft points or undoes an applied split; Escape cancels. Middle-mouse panning remains available.</p>
+                <h3>Segmentation view</h3>
+                <p>Use View to show or hide saved objects, suggestions, numbers, and fills, or fit the image. Alt-click repeatedly to cycle through overlapping objects; suggestions toggle selection as you cycle. Hiding suggestions clears their selection. These controls do not change saved annotations.</p>
+                <h3>Segmentation suggestions</h3>
+                <p>Suggest generates temporary outlines. Click a cell or its numbered badge to select it; click again to deselect. Gold marks selected suggestions, and white marks the hovered suggestion. Choose the class beside Accept above the image to save all selected objects to that class. Reject removes selected suggestions; Deselect clears only the selection. Clear suggestions removes all pending suggestions and keeps saved objects. Undo restores the last batch.</p>
+                <p>Suggestions are temporary until accepted. Running SAM2 again replaces pending suggestions. Check overlapping selections for unwanted whole-cluster outlines.</p>
+                <p>Masks with holes, disconnected pieces or invalid outlines are skipped. Polygon boundaries are simplified with a tolerance of at most 2 image pixels.</p>
+
                 <h3>Canvas Controls</h3>
                 <ul>
                     <li><b>Pan:</b> Click and drag the image background.</li>
@@ -475,7 +616,7 @@
                     <li><b>Delete:</b> Delete the selected annotations as one reversible edit.</li>
                     <li><b>Import current image:</b> Import an existing CSV, YOLO TXT, COCO JSON, or Pascal VOC XML file for the loaded image.</li>
                     <li><b>Import Matched:</b> Import all matched annotation files for the opened image folder. Ambiguous duplicate image names are skipped until path-specific annotation files exist.</li>
-                    <li><b>Save current annotations:</b> Write annotations for the current image to the app's server-side annotations folder.</li>
+                    <li><b>Save current annotations:</b> Annotations autosave beside each image after opening its folder with write access. Save retries a failed write.</li>
                     <li><b>Validate project:</b> Check all loaded images, classes, and final annotations for COCO dataset consistency.</li>
                     <li><b>Export project COCO:</b> Validate and download one consolidated COCO file for every loaded image, requiring reviewed images and explicitly confirmed empty negatives.</li>
                     <li><b>Escape:</b> Exit Manual Mode, cancel a drawing, or close this window.</li>
@@ -484,20 +625,38 @@
         </div>
     </div>
     <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
-    <dialog id="projectDialog">
-        <h3>Projects</h3>
+    <dialog id="projectDialog" aria-labelledby="projectChooserHeading">
+        <h2 id="projectChooserHeading">Choose your project</h2>
         <p>Current project: <span id="activeProjectName"></span></p>
-        <p>Switching clears the image queue. Select the source images again after opening a project.</p>
+        <p>Projects remember their image folder and last image. Annotations save beside their images.</p>
+        <section id="projectOpenSection">
+        <h3>Continue a project</h3>
         <label for="savedProjectSelect">Saved project</label>
         <select id="savedProjectSelect" class="form-control"></select>
-        <button id="openProjectBtn" type="button" class="btn btn-secondary">Open project</button>
-        <hr>
+        <button id="openProjectBtn" type="button" class="btn btn-secondary" disabled>Open project</button>
+        </section>
+        <section id="projectNewSection">
+        <h3>Create a project</h3>
+        <fieldset class="project-type-options">
+            <legend>What would you like to annotate?</legend>
+            <label class="project-type-card">
+                <input type="radio" name="projectTaskType" value="bounding_box">
+                <span class="project-type-art detection-art" aria-hidden="true"><span></span><span></span></span>
+                <strong>Detect objects</strong><span>Draw boxes around objects.</span><small>Object detection</small>
+            </label>
+            <label class="project-type-card">
+                <input type="radio" name="projectTaskType" value="instance_segmentation">
+                <span class="project-type-art segmentation-art" aria-hidden="true"><span></span><span></span></span>
+                <strong>Outline objects</strong><span>Trace each object's boundary.</span><small>Instance segmentation</small>
+            </label>
+        </fieldset>
         <label for="newProjectName">New project name</label>
         <input id="newProjectName" class="form-control" maxlength="120" placeholder="Project name">
         <label><input id="reuseProjectClasses" type="checkbox"> Reuse the current project's classes</label>
         <button id="createProjectBtn" type="button" class="btn btn-primary">Create project</button>
+        </section>
         <p id="projectDialogStatus" role="status"></p>
-        <button id="closeProjectDialogBtn" type="button" class="btn btn-secondary">Cancel</button>
+        <button id="closeProjectDialogBtn" type="button" class="btn btn-secondary">Continue current project</button>
     </dialog>
     <script src="static/apiClient-refined.js"></script>
     <script src="static/apiWorkflows.js"></script>
@@ -505,6 +664,7 @@
     <script src="static/stateStore.js"></script>
     <script src="static/domRefs.js"></script>
     <script src="static/fileUtils.js"></script>
+    <script src="static/projectFolder.js"></script>
     <script src="static/imageController.js"></script>
     <script src="static/annotationMatching.js"></script>
     <script src="static/annotationCodecs.js"></script>
@@ -522,7 +682,13 @@
     <script src="static/canvasGeometry.js"></script>
     <script src="static/canvasInteractionController.js"></script>
     <script src="static/canvasRenderer-refined.js"></script>
-    <script src="static/manualClassPicker.js"></script>
+      <script src="static/manualClassPicker.js"></script>
+      <script src="static/polygon/state.js"></script>
+      <script src="static/polygon/geometry.js"></script>
+      <script src="static/polygon/persistence.js"></script>
+      <script src="static/polygon/viewport.js"></script>
+      <script src="static/polygon/localTools.js"></script>
+      <script src="static/polygonEditor.js"></script>
     <script src="static/script-refined.js"></script>
     <script src="static/refinedUi.js"></script>
 </body>

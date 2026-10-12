@@ -41,8 +41,12 @@ def test_refined_ui_retains_original_controls_and_event_targets():
     # Shared controllers must keep their original initialization order.
     expected = [s.replace('static/classUiController.js', 'static/classUiController-refined.js').replace('static/apiClient.js', 'static/apiClient-refined.js').replace('static/canvasRenderer.js', 'static/canvasRenderer-refined.js').replace('static/classManager.js', 'static/classManager-refined.js')
                 for s in original.scripts[:-1]]
+    expected.insert(expected.index('static/fileUtils.js') + 1, 'static/projectFolder.js')
     assert refined.scripts == expected + [
-        'static/manualClassPicker.js', 'static/script-refined.js', 'static/refinedUi.js'
+        'static/manualClassPicker.js',
+        'static/polygon/state.js', 'static/polygon/geometry.js', 'static/polygon/persistence.js',
+        'static/polygon/viewport.js', 'static/polygon/localTools.js', 'static/polygonEditor.js',
+        'static/script-refined.js', 'static/refinedUi.js'
     ]
     assert refined.stylesheets == ['static/style-refined.css']
     for asset in refined.scripts + refined.stylesheets:
