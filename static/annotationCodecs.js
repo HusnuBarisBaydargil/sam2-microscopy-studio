@@ -52,6 +52,7 @@
         const exportAnnotations = annotations
             .map(normalizeForExport)
             .filter(Boolean);
+        exportAnnotations.forEach(annotation => normalizeClassName(annotation.class || 'Unlabeled'));
 
         if (normalizedFormat === 'csv' || normalizedFormat === 'csv_rich') {
             return {
@@ -113,7 +114,16 @@
     }
 
     function normalizeClassName(value) {
-        return String(value || '').trim().slice(0, 64);
+        const name = String(value || '').trim();
+        let length = 0;
+        // Count Unicode characters as the server does, stopping before export allocation.
+        for (const character of name) {
+            if (++length > 128) throw new Error('Class name cannot exceed 128 characters.');
+            const code = character.codePointAt(0);
+            if (code < 32 || code === 127) throw new Error('Class name cannot contain control characters.');
+            if (code >= 0xd800 && code <= 0xdfff) throw new Error('Class name contains an unsupported Unicode character.');
+        }
+        return name;
     }
 
     function normalizeClassList(classes) {
@@ -387,7 +397,15 @@
     }
 
     function xmlEscape(value) {
-        return String(value ?? '')
+        const text = String(value ?? '');
+        for (const character of text) {
+            const code = character.codePointAt(0);
+            const valid = code === 9 || code === 10 || code === 13
+                || (code >= 32 && code <= 0xd7ff) || (code >= 0xe000 && code <= 0xfffd)
+                || (code >= 0x10000 && code <= 0x10ffff);
+            if (!valid) throw new Error('VOC XML text contains an unsupported character.');
+        }
+        return text
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')

@@ -181,7 +181,36 @@ async function main() {
     assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));
     manifest.project_id='project-b';assert.equal(await reopen(),false);assert(error.includes('active project changed'));
     assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));
-    // COCO's shortened category names must not create a spurious project class.
+    // Full supported names sharing a 64-character prefix survive folder autosave and reopen.
+    for(const kind of ['csv','csv_rich','yolo','coco','voc']) {
+        await savedFile(kind);
+        const prefix='Microscopy '+ 'x'.repeat(53),names=[prefix+'a'.repeat(63)+'A',prefix+'a'.repeat(63)+'B'];
+        const palette=normalizeClassList(oldClasses.map((item,index)=>({...item,name:names[index]})));
+        appState.classes=palette;const values=annotations.map((item,index)=>({...item,class:names[index]}));
+        await saveFolderAnnotations(image,values,'reviewed');writes=0;classSaves=0;autosaves=0;
+        appState.classes=palette.slice().reverse();
+        const expected=structuredClone(appState.classes);
+        assert(await reopen());assert.deepEqual(appState.classes,expected);
+        assert.deepEqual(appState.annotationsByImage.get(image.id).map(item=>item.class),names);
+        assert.equal(image.reviewStatus,'reviewed');assert.equal(classSaves,0);assert.equal(autosaves,0);assert.equal(writes,0);
+        assert.equal(appState.classes.length,2);assert.equal(appState.nextClassId,20);
+    }
+    // Reject unsupported names before either annotation or review sidecar is written.
+    for(const kind of ['csv','csv_rich','yolo','coco','voc']) {
+        await savedFile(kind);const bytes=[...disk],before=structuredClone(appState);
+        for(const name of ['x'.repeat(129),'x'.repeat(64)+String.fromCharCode(0)+'suffix']) {
+            const values=[{...annotations[0],class:name}];
+            await assert.rejects(saveFolderAnnotations(image,values,'reviewed'),/cannot exceed 128 characters|cannot contain control characters/);
+            assert.equal(writes,0);assert.deepEqual([...disk],bytes);assert.deepEqual(appState,before);
+        }
+    }
+    await savedFile('voc');const vocBytes=[...disk],vocState=structuredClone(appState);
+    for(const code of [0xd800,0xdbff,0xdc00,0xdfff,0xfffe,0xffff]) {
+        const values=[{...annotations[0],class:'x'.repeat(64)+String.fromCodePoint(code)+'suffix'}];
+        await assert.rejects(saveFolderAnnotations(image,values,'reviewed'),/VOC XML text contains an unsupported character|unsupported Unicode character/);
+        assert.equal(writes,0);assert.deepEqual([...disk],vocBytes);assert.deepEqual(appState,vocState);
+    }
+    // Complete COCO names must not create a spurious project class after a rename.
     appState=stateStore.createAppState();appState.projectSettings.projectId='project-a';
     const longName='Microscopy cell '+ 'a'.repeat(70),renamedLong='Reviewed cell '+ 'b'.repeat(70);
     appState.classes=normalizeClassList([{...oldClasses[0],name:longName}]);appState.nextClassId=20;

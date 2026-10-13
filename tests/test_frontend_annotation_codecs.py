@@ -1,6 +1,8 @@
+import json
 import shutil
 import subprocess
 import textwrap
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -236,3 +238,120 @@ def test_annotation_codecs_round_trip_supported_formats():
     )
 
     subprocess.run([node, "-e", js_test], cwd=REPO_ROOT, check=True)
+
+
+@pytest.mark.parametrize('annotation_format', ['csv', 'csv_rich', 'yolo', 'coco', 'voc'])
+def test_detection_formats_preserve_distinct_128_character_class_names(annotation_format):
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,format='FORMAT';
+const prefix='Microscopy '+ 'x'.repeat(53),suffix='&<>"\''+String.fromCharCode(181)+'y'.repeat(57);
+const names=[prefix+suffix+'A',prefix+suffix+'B'];
+assert(names.every(name=>name.length===128));assert.equal(names[0].slice(0,64),names[1].slice(0,64));
+const classes=names.map((name,i)=>({id:[9,3][i],name,color:i?'#abcdef':'#123456',hotkey:i?'o':'c'}));
+const annotations=names.map((name,i)=>({id:i+1,class:name,bbox:[10+i*30,10,20,20],type:'manual'}));
+const image={name:'cells.png',originalImage:{width:100,height:100}};
+const output=codec.buildAnnotationExport(image.name,annotations,format,image,{classes});
+// These are standard exports: COCO/VOC must retain labels without a review sidecar.
+const parsed=codec.parseAnnotationFile(output.content,format,image,{classes:classes.slice().reverse()});
+assert.deepEqual(parsed.annotations.map(item=>item.class),names);
+for(let i=0;i<annotations.length;i++)for(let j=0;j<4;j++)assert(Math.abs(parsed.annotations[i].bbox[j]-annotations[i].bbox[j])<1e-8);
+if(format==='coco'){
+ const data=JSON.parse(output.content);
+ assert.deepEqual(data.categories.map(item=>[item.id,item.name]),classes.map(item=>[item.id,item.name]));
+ assert.deepEqual(data.annotations.map(item=>item.category_id),[9,3]);
+ const withSidecar=codec.parseAnnotationFile(output.content,format,image,{savedClasses:classes});
+ assert.deepEqual(withSidecar.annotations.map(item=>item.class),names);
+}
+if(format==='yolo')assert.deepEqual(output.content.trim().split('\n').map(row=>Number(row.split(' ')[0])),[8,2]);
+""".replace('FORMAT', annotation_format)
+    subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)
+
+
+@pytest.mark.parametrize('annotation_format', ['csv', 'csv_rich', 'yolo', 'coco', 'voc'])
+def test_detection_exports_reject_unsupported_class_names_without_truncating(annotation_format):
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,format='FORMAT',image={name:'cells.png',originalImage:{width:100,height:100}};
+const names=['x'.repeat(129),'x'.repeat(128)+'A','x'.repeat(128)+'B'];
+for(const name of names){
+ const annotations=[{id:1,class:name,bbox:[10,10,20,20]}],classes=[{id:9,name}];
+ const before=JSON.stringify({annotations,classes});
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot exceed 128 characters/);
+ assert.equal(JSON.stringify({annotations,classes}),before);
+ // A caller-provided normalizer must not bypass the shared export validation.
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes,normalizeAnnotation:item=>item}),/cannot exceed 128 characters/);
+}
+// Unpaired surrogates cannot round-trip through UTF-8 CSV or XML, even inside otherwise short labels.
+for(const code of [0xd800,0xdbff,0xdc00,0xdfff]){
+ const name='x'.repeat(64)+String.fromCharCode(code)+'suffix';
+ assert.throws(()=>codec.buildAnnotationExport(image.name,[{id:1,class:name,bbox:[10,10,20,20]}],format,image),/unsupported Unicode character/);
+}
+// Python counts Unicode code points, so a supported name may occupy more UTF-16 units.
+const name=String.fromCodePoint(0x1f52c).repeat(128),classes=[{id:9,name}],annotations=[{id:1,class:name,bbox:[10,10,20,20]}];
+const output=codec.buildAnnotationExport(image.name,annotations,format,image,{classes});
+assert.equal(codec.parseAnnotationFile(output.content,format,image,{classes}).annotations[0].class,name);
+annotations[0].class+=String.fromCodePoint(0x1f52c);
+assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot exceed 128 characters/);
+""".replace('FORMAT', annotation_format)
+    subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)
+
+
+@pytest.mark.parametrize('annotation_format', ['csv', 'csv_rich', 'yolo', 'coco', 'voc'])
+def test_detection_exports_reject_control_characters_after_character_64(annotation_format):
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,format='FORMAT',image={name:'cells.png',originalImage:{width:100,height:100}};
+const codes=[...Array(32).keys(),127];
+for(const code of codes){
+ const name='x'.repeat(64)+String.fromCharCode(code)+'suffix';
+ const annotations=[{id:1,class:name,bbox:[10,10,20,20]}],classes=[{id:9,name}];
+ const before=JSON.stringify({annotations,classes});
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot contain control characters/);
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes,normalizeAnnotation:item=>item}),/cannot contain control characters/);
+ assert.equal(JSON.stringify({annotations,classes}),before);
+}
+""".replace('FORMAT', annotation_format)
+    subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)
+
+
+def test_voc_xml_rejects_forbidden_code_points_and_preserves_valid_unicode():
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,image={name:'cells.png',originalImage:{width:100,height:100}};
+const badCodes=[0xd800,0xdbff,0xdc00,0xdfff,0xfffe,0xffff];
+for(const code of badCodes){
+ const name='x'.repeat(64)+String.fromCodePoint(code)+'suffix',annotations=[{id:1,class:name,bbox:[10,10,20,20]}];
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,'voc',image),/VOC XML text contains an unsupported character|unsupported Unicode character/);
+ const badFile='cells'+String.fromCodePoint(code)+'.png';
+ assert.throws(()=>codec.buildAnnotationExport(badFile,[{...annotations[0],class:'Valid'}],'voc',image),/VOC XML text contains an unsupported character/);
+}
+const validCodes=[0x20,0x85,0xd7ff,0xe000,0xfdd0,0xfffd,0x10000,0x1f52c,0x10ffff];
+const documents=validCodes.map(code=>{
+ const name='x'.repeat(64)+String.fromCodePoint(code)+'suffix';
+ const output=codec.buildAnnotationExport(image.name,[{id:1,class:name,bbox:[10,10,20,20]}],'voc',image);
+ return {name,xml:output.content};
+});
+console.log(JSON.stringify(documents));
+"""
+    result = subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT,
+                            check=True, capture_output=True)
+    for document in json.loads(result.stdout):
+        root = ET.fromstring(document['xml'])
+        assert root.findtext('object/name') == document['name']
