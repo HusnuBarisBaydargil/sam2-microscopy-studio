@@ -3098,7 +3098,7 @@ ${badgeInfo.title}`;
                             classes.push(current); byId.set(current.id, current);
                         }
                         labels.set(saved.name, current.name);
-                    } else if (!metadata.project_id && byId.has(saved.id) && byId.get(saved.id).name !== saved.name) {
+                    } else if (!metadata.project_id && (!byId.has(saved.id) || byId.get(saved.id).name !== saved.name)) {
                         throw new Error(`Legacy class mapping for "${saved.name}" conflicts with the project. Import annotations explicitly to choose a class mapping.`);
                     }
                 }

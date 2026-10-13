@@ -149,6 +149,20 @@ async function main() {
     const legacyPalette=structuredClone(appState.classes),legacyBytes=[...disk];
     assert.equal(await reopen(),false);assert(error.includes('Legacy class mapping'));
     assert.deepEqual(appState.classes,legacyPalette);assert.deepEqual([...disk],legacyBytes);assert.equal(writes,0);
+    // Missing legacy IDs must not be silently recreated under a fresh class identity.
+    for(const kind of ['csv','csv_rich','yolo','coco','voc']) {
+        await savedFile(kind,[annotations[1]]);
+        const legacyPath=annotationCodecs.annotationDownloadName(image.name,kind)+'.review.json';
+        const missingLegacy=JSON.parse(disk.get(legacyPath));delete missingLegacy.project_id;
+        disk.set(legacyPath,JSON.stringify(missingLegacy));
+        appState.classes=normalizeClassList([oldClasses[0]]);
+        manifest.retired_classes=[oldClasses[1]];
+        const palette=structuredClone(appState.classes),bytes=[...disk],nextId=appState.nextClassId;
+        assert.equal(await reopen(),false);assert(error.includes('Legacy class mapping'));
+        assert.deepEqual(appState.classes,palette);assert.equal(appState.nextClassId,nextId);
+        assert.deepEqual([...disk],bytes);assert.equal(writes,0);assert.equal(classSaves,0);assert.equal(autosaves,0);
+        assert.equal(appState.annotationsByImage.get(image.id).length,0);
+    }
     // A known foreign project decodes by its own names; coincident IDs are not a rename.
     await savedFile('yolo',[annotations[0]]);appState.projectSettings.projectId='project-b';
     appState.classes=normalizeClassList([{id:3,name:'Different target',color:'#abcdef',hotkey:'n'}]);
