@@ -556,17 +556,18 @@ const points = () => find('data-object-id',1).getAttribute('points');
     await editClass('class-name-input',originalDeletedClass.name,conflictIndex);
     const conflictedClasses=structuredClone(classPayload),beforeConflictSaves=saves;
     assert(!el('polygonUndo').disabled);assert(el('polygonRedo').disabled);
+    // Renames now have their own chronological Undo step before the earlier deletion.
     await el('polygonUndo').click();
-    assert.deepEqual(saved,beforeConflictUndo);assert.deepEqual(classPayload,conflictedClasses);
-    assert.equal(saves,beforeConflictSaves);assert.equal(el('polygonSaveState').textContent,'Saved');
-    assert(el('polygonStatus').textContent.includes('name'));assert(el('polygonStatus').textContent.includes(originalDeletedClass.name));
-    assert(!el('polygonUndo').disabled);assert(el('polygonRedo').disabled);
-    await editClass('class-name-input',conflictingClass.name,conflictIndex);
+    assert.deepEqual(saved,beforeConflictUndo);
+    assert.equal(classPayload.find(cls=>cls.id===conflictingClass.id).name,conflictingClass.name);
+    assert.notDeepEqual(classPayload,conflictedClasses);
+    assert.equal(saves,beforeConflictSaves+1);assert.equal(el('polygonSaveState').textContent,'Saved');
+    assert(!el('polygonUndo').disabled);assert(!el('polygonRedo').disabled);
     classRestoreMismatch=true;await el('polygonUndo').click();classRestoreMismatch=false;
     assert.equal(classRestorePayload,deletionId);assert.deepEqual(saved,beforeConflictUndo);
-    assert.equal(saves,beforeConflictSaves);assert(el('polygonStatus').textContent.includes('original class ID'));
+    assert.equal(saves,beforeConflictSaves+1);assert(el('polygonStatus').textContent.includes('original class ID'));
     assert(!el('polygonClass').children.some(option=>String(option.value)===String(deletionId)));
-    assert(!el('polygonUndo').disabled);assert(el('polygonRedo').disabled);
+    assert(!el('polygonUndo').disabled);assert(!el('polygonRedo').disabled);
     await el('polygonUndo').click();assert.deepEqual(saved,beforeClassDelete);
     assert.equal(classRestorePayload,deletionId);
     assert(classPayload.some(cls=>cls.id===deletionId));
@@ -779,25 +780,36 @@ const points = () => find('data-object-id',1).getAttribute('points');
         review_status:'reviewed',labelme:{flags:{checked:true},custom:'keep'},annotations:[
             {...structuredClone(original.annotations[0]),id:2,edited:true,labelme:{group_id:42,flags:{occluded:true}}},
             {...structuredClone(original.annotations[0]),id:7,class_id:77,source:'sam2',edited:false}]};
+    let nativeClasses=[{id:4,name:'Cell'},{id:8,name:'Other'},{id:9,name:'Imported'},{id:77,name:'Restored class'}];
     const encodeNative=document=>({imagePath:'native.png',imageWidth:100,imageHeight:100,
         ...document.labelme,microscopy_studio:{...document,annotations:undefined,labelme:undefined,labelme_keys:Object.keys(document.labelme)},
-        shapes:document.annotations.map(item=>({...item.labelme,label:'Cell',shape_type:item.geometry.type,points:item.geometry.points,
+        shapes:document.annotations.map(item=>({...item.labelme,label:nativeClasses.find(cls=>cls.id===item.class_id).name,shape_type:item.geometry.type,points:item.geometry.points,
             microscopy_studio:{id:item.id,class_id:item.class_id,source:item.source,edited:item.edited,labelme_keys:Object.keys(item.labelme||{})}}))});
-    let nativeRaw=encodeNative(nativeDocument),nativeRequests=0,nativeWrites=0;
+    let nativeRaw=encodeNative(nativeDocument),nativeRequests=0,nativeWrites=0,nativeFolderFailure=false;
     const nativeBefore=structuredClone(nativeDocument),nativeImportsBefore=importCalls;
     const previousApi=window.SAM2ApiClient;
     window.SAM2ApiClient={async apiFetch(path,options){
         const data=path==='api/project/segmentation'?JSON.parse(options.body):null;
+        if(path==='api/classes'){
+            const result=await previousApi.apiFetch(path,options),body=await result.json();
+            if(result.ok)nativeClasses=structuredClone(body.classes);
+            return {ok:result.ok,json:async()=>structuredClone(body)};
+        }
         if(data?.action==='load' && data.labelme){
             nativeRequests++;assert.deepEqual(data.labelme,JSON.parse(JSON.stringify(nativeRaw)));
             assert.equal(data.image_name,'native.png');assert.equal(data.restore_classes,true);
             if(data.labelme.microscopy_studio===null)return {ok:false,json:async()=>({error:'Invalid native autosave metadata'})};
             return {ok:true,json:async()=>({document:structuredClone(nativeDocument),revision:null,
-                classes:[{id:4,name:'Cell'},{id:8,name:'Other'},{id:9,name:'Imported'},{id:77,name:'Restored class'}]})};
+                classes:structuredClone(nativeClasses)})};
+        }
+        if(data?.action==='export_labelme'){
+            exportedPayload=data;
+            return {ok:true,json:async()=>({labelme:encodeNative(data.document)})};
         }
         return previousApi.apiFetch(path,options);
     }};
     window.SAM2ProjectFolder={has:()=>true,read:async()=>JSON.stringify(nativeRaw),write:async(file,name)=>{
+        if(nativeFolderFailure)throw Error('Folder permission denied');
         assert.strictEqual(file,nativeFile);assert.equal(name,'native.json');nativeWrites++;
         nativeDocument=structuredClone(exportedPayload.document);nativeRaw=encodeNative(nativeDocument);
     }};
@@ -832,6 +844,46 @@ const points = () => find('data-object-id',1).getAttribute('points');
     assert(el('polygonReviewNext').disabled);assert.equal(nativeWrites,beforeInvalidNativeWrites);
     assert.equal(importCalls,nativeImportsBefore);
     nativeRaw=encodeNative(nativeDocument);await reopenNative();assert.equal(el('polygonReviewState').textContent,'Reviewed');
+    // Rename is a saved, reversible label edit, even when geometry and IDs do not change.
+    const beforeRename=structuredClone(nativeDocument),beforeRenameRaw=structuredClone(nativeRaw),beforeRenameWrites=nativeWrites;
+    await editClass('class-name-input','Renamed cell',0);
+    assert.equal(nativeWrites,beforeRenameWrites+1);assert.equal(nativeRaw.shapes[0].label,'Renamed cell');
+    assert.equal(nativeRaw.shapes[1].label,'Restored class');assert.equal(nativeRaw.microscopy_studio.review_status,'in_progress');
+    assert.deepEqual(nativeDocument.annotations,beforeRename.annotations);assert.equal(nativeDocument.next_object_id,beforeRename.next_object_id);
+    assert.equal(el('polygonSaveState').textContent,'Saved');assert.equal(el('polygonReviewState').textContent,'In progress');
+    const renamePan={...event(svg,5,5),button:1},renamePanEnd={...event(svg,5,5),button:1,clientX:145,clientY:35};
+    stage.onpointerdown(renamePan);stage.onpointermove(renamePanEnd);stage.onpointerup(renamePanEnd);
+    assert.deepEqual(offset(),[35,-25]);assert.equal(nativeWrites,beforeRenameWrites+1);
+    await editClass('class-color-input','#abcdef',0);
+    await el('polygonUndo').click();
+    assert.equal(nativeWrites,beforeRenameWrites+2);assert.deepEqual(nativeDocument,beforeRename);
+    assert.deepEqual(nativeRaw,beforeRenameRaw);assert.equal(nativeClasses[0].color,'#abcdef');
+    assert.equal(el('polygonReviewState').textContent,'Reviewed');assert.deepEqual(offset(),[35,-25]);
+    await el('polygonRedo').click();assert.equal(nativeWrites,beforeRenameWrites+3);
+    assert.equal(nativeRaw.shapes[0].label,'Renamed cell');assert.equal(nativeClasses[0].color,'#abcdef');
+    // A second rename while already in progress must still save; failures cannot look clean.
+    const beforeFailedRename=structuredClone(nativeRaw);
+    nativeFolderFailure=true;await editClass('class-name-input','Pending rename',0);
+    assert.equal(nativeWrites,beforeRenameWrites+3);assert.deepEqual(nativeRaw,beforeFailedRename);
+    assert.equal(el('polygonSaveState').textContent,'Save failed — unsaved changes');
+    discard=false;assert(!editor.canLeave());discard=true;
+    nativeFolderFailure=false;await el('polygonSave').click();assert.equal(nativeWrites,beforeRenameWrites+4);
+    assert.equal(nativeRaw.shapes[0].label,'Pending rename');assert.equal(el('polygonSaveState').textContent,'Saved');
+    await el('polygonUndo').click();assert.equal(nativeWrites,beforeRenameWrites+5);assert.equal(nativeRaw.shapes[0].label,'Renamed cell');
+    await el('polygonUndo').click();assert.equal(nativeWrites,beforeRenameWrites+6);assert.deepEqual(nativeRaw,beforeRenameRaw);
+    assert(el('polygonUndo').disabled);assert(!el('polygonRedo').disabled);
+    classFailure='Class save failed';await editClass('class-name-input','Rejected rename',0);classFailure=null;
+    assert.equal(nativeWrites,beforeRenameWrites+6);assert.deepEqual(nativeRaw,beforeRenameRaw);
+    assert.equal(nativeClasses[0].name,'Cell');assert(el('polygonUndo').disabled);assert(!el('polygonRedo').disabled);
+    await editClass('class-name-input','Cell',0);assert.equal(nativeWrites,beforeRenameWrites+6);
+    assert.equal(el('polygonReviewState').textContent,'Reviewed');
+    await reopenNative();assert.equal(nativeWrites,beforeRenameWrites+6);assert.deepEqual(nativeDocument,beforeRename);
+    nativeDocument={...nativeDocument,annotations:[],review_status:'confirmed_empty'};
+    nativeRaw=encodeNative(nativeDocument);await reopenNative();
+    await editClass('class-name-input','Renamed cell',0);
+    assert.equal(nativeWrites,beforeRenameWrites+7);assert.equal(nativeRaw.microscopy_studio.review_status,'unreviewed');
+    await el('polygonUndo').click();assert.equal(nativeWrites,beforeRenameWrites+8);
+    assert.equal(nativeRaw.microscopy_studio.review_status,'confirmed_empty');assert.equal(nativeClasses[0].name,'Cell');
     window.SAM2ApiClient=previousApi;
     // Review is an explicit saved decision, independent of autosave. Reopening
     // a folder restores its queue, including reviewed images not yet visited.

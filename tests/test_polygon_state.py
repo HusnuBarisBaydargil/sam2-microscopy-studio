@@ -47,3 +47,27 @@ history.undo();history.setProposals([{id:7}]);assert(!history.canRedo);
 history.undo();assert.deepEqual(history.proposals,[]);
 
 """], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_class_label_changes_stay_dirty_without_geometry_or_review_changes():
+    subprocess.run([_node_executable(), '-'], input=r"""
+const assert=require('assert'),fs=require('fs');global.window={};
+eval(fs.readFileSync('static/polygon/state.js','utf8'));
+const original={next_object_id:2,review_status:'in_progress',annotations:[{id:1,class_id:4,
+    source:'manual',edited:false,geometry:{type:'polygon',points:[[0,0],[10,0],[10,10]]}}]};
+const a={id:4,name:'A',color:'#123456'},b={...a,name:'B'};
+const state=window.SAM2PolygonState.createPolygonState(original);
+state.change(state.document.annotations,state.document.next_object_id,state.proposals,state.document.labelme,
+    {id:4,index:0,item:a,field:'name'});
+assert.deepEqual(state.document,original);assert(state.dirty);
+state.markSaved(state.document);assert(!state.dirty);
+assert.equal(state.undo([b]).item.name,'A');assert(state.dirty);
+// A new rename after an unsaved Undo must not look like the saved rename to B.
+state.change(state.document.annotations,state.document.next_object_id,state.proposals,state.document.labelme,
+    {id:4,index:0,item:a,field:'name'});
+assert(state.dirty);state.markSaved(state.document);assert(!state.dirty);
+assert.equal(state.undo([{...a,name:'C'}]).item.name,'A');assert(state.dirty);
+state.markSaved(state.document);assert(!state.dirty);
+assert.equal(state.redo([a]).item.name,'C');assert(state.dirty);
+assert.deepEqual(state.document,original);
+""", text=True, encoding='utf-8', cwd=Path(__file__).resolve().parents[1], check=True)
