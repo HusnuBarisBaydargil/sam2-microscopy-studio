@@ -2919,10 +2919,21 @@ ${badgeInfo.title}`;
             }
 
             if (Array.isArray(data.classes)) {
-                applyLoadedClasses(data.classes);
+                if (window.SAM2ProjectFolder?.has(imageRecord.file)) {
+                    const restored = data.classes.filter(item => !appState.classes.some(current => current.id === item.id));
+                    if (restored.length) {
+                        appState.classes = normalizeClassList([...appState.classes, ...restored]);
+                        appState.nextClassId = Math.max(appState.nextClassId,
+                            ...appState.classes.map(item => (item.id || 0) + 1));
+                        scheduleProjectClassesSave();
+                    }
+                } else applyLoadedClasses(data.classes);
             }
             applyLoadedAnnotations(data.annotations || [], { markDirty: false, imageRecord, reviewStatus: data.review_status });
-            appState.dirtyImages.delete(imageRecord.id);
+            if (data.labelsChanged) {
+                stateStore.markImageDirty(appState, imageRecord);
+                scheduleFolderAutosave();
+            } else appState.dirtyImages.delete(imageRecord.id);
 
             const msg = `Loaded ${(appState.annotationsByImage.get(imageRecord.id) || []).length} annotations from ${publicAnnotationPath(data.path)}.`;
             updateStatus(msg);
@@ -3061,8 +3072,47 @@ ${badgeInfo.title}`;
             const metadata = metadataText === null ? null : JSON.parse(metadataText);
             const matching = text !== null && metadata?.annotation_sha256 === await annotationTextHash(text);
             const result = text === null ? { annotations: [] } : annotationCodecs.parseAnnotationFile(text, format, imageRecord,
-                { classes: matching ? metadata.classes : appState.classes });
-            if (matching) { result.classes = metadata.classes; result.review_status = metadata.review_status; }
+                { classes: matching ? metadata.classes : appState.classes, savedClasses: matching ? metadata.classes : undefined });
+            if (matching) {
+                const savedClasses = normalizeClassList(metadata.classes);
+                const classes = appState.classes.slice();
+                const byId = new Map(classes.map(item => [item.id, item]));
+                const projectId = appState.projectSettings?.projectId;
+                const sameProject = Boolean(projectId) && metadata.project_id === projectId;
+                const usedNames = new Set(result.annotations.map(item => item.class));
+                let retained = [];
+                if (sameProject && savedClasses.some(item => usedNames.has(item.name) && !byId.has(item.id))) {
+                    const response = await window.SAM2ApiClient.apiFetch('api/project/manifest');
+                    const manifest = await response.json();
+                    if (!response.ok) throw new Error(manifest.error || 'Could not read retained project classes.');
+                    if (manifest.project_id !== projectId) throw new Error('The active project changed. Reopen the project before loading annotations.');
+                    retained = [...manifest.classes, ...(manifest.retired_classes || [])];
+                }
+                const labels = new Map();
+                for (const saved of savedClasses.filter(item => usedNames.has(item.name))) {
+                    if (sameProject) {
+                        const current = byId.get(saved.id) || retained.find(item => item.id === saved.id);
+                        if (!current) throw new Error(`Saved class "${saved.name}" is no longer defined in this project. Import annotations explicitly to choose a class mapping.`);
+                        if (!byId.has(current.id)) {
+                            if (classes.some(item => item.name === current.name)) throw new Error(`Cannot restore class "${current.name}": another class uses that name. Resolve the class-name conflict and reopen the image.`);
+                            classes.push(current); byId.set(current.id, current);
+                        }
+                        labels.set(saved.name, current.name);
+                    } else if (!metadata.project_id && byId.has(saved.id) && byId.get(saved.id).name !== saved.name) {
+                        throw new Error(`Legacy class mapping for "${saved.name}" conflicts with the project. Import annotations explicitly to choose a class mapping.`);
+                    }
+                }
+                result.labelsChanged = false;
+                for (const annotation of result.annotations) {
+                    const name = labels.get(annotation.class);
+                    if (name && name !== annotation.class) { annotation.class = name; result.labelsChanged = true; }
+                }
+                result.classes = classes;
+                const savedSignature = stateStore.reviewClassSignature({ classes: savedClasses });
+                const currentSignature = stateStore.reviewClassSignature({ classes });
+                result.review_status = (metadata.project_id && !sameProject) || savedSignature !== currentSignature
+                    ? (result.annotations.length ? 'in_progress' : 'unreviewed') : metadata.review_status;
+            }
 
             return { ...result, exists: text !== null, path: name };
         } catch (error) { folderLoadFailures.add(imageRecord.file); throw error; }
@@ -3074,7 +3124,8 @@ ${badgeInfo.title}`;
         const output = annotationCodecs.buildAnnotationExport(imageRecord.name, annotations, format, imageRecord, { classes: appState.classes });
         await window.SAM2ProjectFolder.write(imageRecord.file, name, output.content);
         await window.SAM2ProjectFolder.write(imageRecord.file, `${name}.review.json`, JSON.stringify({
-            annotation_sha256: await annotationTextHash(output.content), classes: appState.classes, review_status: reviewStatus
+            annotation_sha256: await annotationTextHash(output.content), project_id: appState.projectSettings?.projectId,
+            classes: appState.classes, review_status: reviewStatus
         }, null, 2));
         return { count: annotations.length, path: name, review_status: reviewStatus };
     }

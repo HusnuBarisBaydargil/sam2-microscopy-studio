@@ -50,18 +50,153 @@ function directory(name,contents={}) {
 """, text=True, encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True)
 
 
+def test_detection_reopen_preserves_project_classes_and_saved_id_mapping():
+    subprocess.run([_node_executable(), '-'], input=r"""
+const assert=require('assert'),fs=require('fs'),vm=require('vm');
+const context={window:{SAM2ApiWorkflows:{}},assert,console,crypto,TextEncoder,structuredClone,Map,Set,WeakSet,JSON,process};
+vm.createContext(context);
+for(const name of ['frontendConfig','annotationCodecs','classManager-refined','stateStore','fileUtils','imageController','annotationController','annotationMatching','annotationWorkflowController']) {
+    vm.runInContext(fs.readFileSync('static/'+name+'.js','utf8'),context);
+}
+const source=fs.readFileSync('static/script-refined.js','utf8');
+const declarations=[...source.matchAll(/^    (?:async )?function (\w+)\(/gm)];
+const selected=new Set(['loadFolderAnnotations','saveFolderAnnotations','annotationTextHash','applyLoadedClasses',
+    'ensureClassesForAnnotations','loadServerAnnotationsForCurrentImage','applyLoadedAnnotations','setAnnotationsForImage','currentImageId']);
+for(let i=0;i<declarations.length;i++)if(selected.has(declarations[i][1])) {
+    vm.runInContext(source.slice(declarations[i].index,declarations[i+1]?.index??source.length),context);
+}
+vm.runInContext(`
+const stateStore=window.SAM2StateStore,classManagerLogic=window.SAM2ClassManager;
+const normalizeClassList=classManagerLogic.normalizeClassList,annotationCodecs=window.SAM2AnnotationCodecs;
+const imageController=window.SAM2ImageController,annotationWorkflowController=window.SAM2AnnotationWorkflowController;
+let appState,format,disk,writes,classSaves,autosaves,manifest,manifestReads,error;
+const folderLoadFailures=new WeakSet(),classificationSelect={value:'Cell'};
+const currentAnnotationFormat=()=>format,imageDimensions=image=>({width:100,height:100});
+const normalizeAnnotation=item=>item,beginAnnotationOperation=()=>()=>true,setLoader=()=>()=>{};
+const confirmReplaceUnsavedAnnotations=()=>true;
+const annotationMatchModeForImage=()=> 'path',publicImageName=image=>image.name,publicAnnotationPath=value=>value;
+const scheduleProjectClassesSave=()=>classSaves++,scheduleFolderAutosave=()=>autosaves++;
+const renderClassControls=()=>{},draw=()=>{},updateButtonStates=()=>{},updateAnnotationLog=()=>{},renderImageBrowser=()=>{},updateMatchSummaryDisplay=()=>{},showToast=()=>{};
+const updateStatus=value=>error=value;
+const image={id:'image',name:'cells.png',file:{},originalImage:{width:100,height:100}};
+const oldClasses=[{id:3,name:'Cell',color:'#123456',hotkey:'c'},{id:9,name:'Debris',color:'#567890',hotkey:'d'}];
+const annotations=[{id:1,class:'Cell',bbox:[10,10,20,20]},{id:2,class:'Debris',bbox:[50,50,10,10]}];
+window.SAM2ProjectFolder={has:()=>true,read:async(file,name)=>disk.get(name)??null,write:async(file,name,text)=>{writes++;disk.set(name,text);}};
+window.SAM2ApiClient={apiFetch:async()=>{manifestReads++;return {ok:true,json:async()=>structuredClone(manifest)};}};
+async function savedFile(selectedFormat,values=annotations,review='reviewed') {
+    appState=stateStore.createAppState();appState.projectSettings.projectId='project-a';
+    appState.classes=normalizeClassList(oldClasses);appState.nextClassId=20;
+    appState.images=[image];appState.currentImage=image;stateStore.initializeImageState(appState,image.id);
+    format=selectedFormat;disk=new Map();writes=0;classSaves=0;autosaves=0;manifestReads=0;error='';
+    folderLoadFailures.delete(image.file);
+    await saveFolderAnnotations(image,values,review);writes=0;
+    manifest={project_id:'project-a',classes:[],retired_classes:[]};
+}
+async function reopen() {return loadServerAnnotationsForCurrentImage({silentWhenMissing:false});}
+async function main() {
+    for(const kind of ['csv','csv_rich','yolo','coco','voc']) {
+        await savedFile(kind);
+        // Reordering and editing controls must not reinterpret sparse saved numeric IDs.
+        appState.classes=normalizeClassList([{...oldClasses[1],color:'#abcdef',hotkey:'b'},
+            {...oldClasses[0],color:'#654321',hotkey:'n'},{id:15,name:'New class',color:'#70b7ff',hotkey:'x'}]);
+        const expected=structuredClone(appState.classes),before=[...disk];
+        assert(await reopen());assert.deepEqual(appState.classes,expected);assert.equal(appState.nextClassId,20);
+        assert.deepEqual(appState.annotationsByImage.get(image.id).map(item=>item.class),['Cell','Debris']);
+        assert.deepEqual([...disk],before);assert.equal(writes,0);assert.equal(classSaves,0);assert.equal(autosaves,0);
+        assert.equal(image.reviewStatus,'in_progress'); // Taxonomy changed since this review.
+        // A same-project rename follows its original ID without reviving the obsolete name.
+        await savedFile(kind);
+        const decodedBoxes=annotationCodecs.parseAnnotationFile(disk.get(annotationCodecs.annotationDownloadName(image.name,kind)),kind,image,{classes:oldClasses}).annotations.map(item=>item.bbox);
+        appState.classes=normalizeClassList([{...oldClasses[1],color:'#abcdef',hotkey:'b'},
+            {...oldClasses[0],name:'Nucleus',color:'#654321',hotkey:'n'}]);
+        const renamedPalette=structuredClone(appState.classes);
+        assert(await reopen());assert.deepEqual(appState.classes,renamedPalette);
+        const loaded=appState.annotationsByImage.get(image.id);
+        assert.deepEqual(loaded.map(item=>item.class),['Nucleus','Debris']);
+        assert.deepEqual(loaded.map(item=>item.bbox),decodedBoxes);
+        assert.equal(image.reviewStatus,'in_progress');assert(appState.dirtyImages.has(image.id));assert.equal(autosaves,1);
+        await saveFolderAnnotations(image,loaded,image.reviewStatus);
+        assert.equal(JSON.parse(disk.get(annotationCodecs.annotationDownloadName(image.name,kind)+'.review.json')).project_id,'project-a');
+        assert(await reopen());assert.deepEqual(appState.classes,renamedPalette);
+        assert.deepEqual(appState.annotationsByImage.get(image.id).map(item=>item.class),['Nucleus','Debris']);
+    }
+    // Colors, shortcuts, and ordering alone do not invalidate a completed review.
+    await savedFile('yolo');appState.classes=normalizeClassList([{...oldClasses[1],hotkey:'b'},{...oldClasses[0],color:'#654321'}]);
+    assert(await reopen());assert.equal(image.reviewStatus,'reviewed');assert.equal(writes,0);
+    // Legacy sidecars remain readable when their ID/name mapping is unambiguous.
+    await savedFile('yolo');const legacyName=annotationCodecs.annotationDownloadName(image.name,format)+'.review.json';
+    const validLegacy=JSON.parse(disk.get(legacyName));delete validLegacy.project_id;disk.set(legacyName,JSON.stringify(validLegacy));
+    appState.classes=normalizeClassList([{...oldClasses[1],hotkey:'b'}, {...oldClasses[0],color:'#654321'},
+        {id:15,name:'New class',color:'#70b7ff',hotkey:'x'}]);
+    const validLegacyPalette=structuredClone(appState.classes);
+    assert(await reopen());assert.deepEqual(appState.classes,validLegacyPalette);
+    assert.deepEqual(appState.annotationsByImage.get(image.id).map(item=>item.class),['Cell','Debris']);assert.equal(writes,0);
+    // Empty files must not bring deleted, unused palette entries back.
+    await savedFile('csv',[],'confirmed_empty');appState.classes=normalizeClassList([oldClasses[0]]);
+    assert(await reopen());assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));assert.equal(image.reviewStatus,'unreviewed');
+    // Referenced retired IDs use current retained definitions, not stale sidecar controls/names.
+    await savedFile('yolo',[annotations[1]]);appState.classes=normalizeClassList([oldClasses[0]]);
+    manifest.classes=structuredClone(appState.classes);
+    const retained={...oldClasses[1],name:'Retained debris',color:'#abcdef',hotkey:'b'};
+    manifest.retired_classes=[retained];
+    assert(await reopen());assert.equal(manifestReads,1);assert.equal(classSaves,1);
+    assert.deepEqual(appState.classes[1],retained);assert.equal(appState.annotationsByImage.get(image.id)[0].class,'Retained debris');
+    assert.equal(appState.classes[1].id,9);
+    // Legacy ambiguous identities fail closed; newer definitions remain intact.
+    await savedFile('yolo');const name=annotationCodecs.annotationDownloadName(image.name,format)+'.review.json';
+    const metadata=JSON.parse(disk.get(name));delete metadata.project_id;disk.set(name,JSON.stringify(metadata));
+    appState.classes=normalizeClassList([{...oldClasses[0],name:'Nucleus'},oldClasses[1]]);
+    const legacyPalette=structuredClone(appState.classes),legacyBytes=[...disk];
+    assert.equal(await reopen(),false);assert(error.includes('Legacy class mapping'));
+    assert.deepEqual(appState.classes,legacyPalette);assert.deepEqual([...disk],legacyBytes);assert.equal(writes,0);
+    // A known foreign project decodes by its own names; coincident IDs are not a rename.
+    await savedFile('yolo',[annotations[0]]);appState.projectSettings.projectId='project-b';
+    appState.classes=normalizeClassList([{id:3,name:'Different target',color:'#abcdef',hotkey:'n'}]);
+    assert(await reopen());assert.equal(appState.classes[0].name,'Different target');assert.equal(appState.classes[0].id,3);
+    assert.equal(appState.annotationsByImage.get(image.id)[0].class,'Cell');assert.equal(image.reviewStatus,'in_progress');
+    assert(appState.classes.find(item=>item.name==='Cell').id>=20);assert.equal(writes,0);
+    // Unknown same-project IDs must not silently become fresh identities.
+    await savedFile('csv',[annotations[1]]);appState.classes=normalizeClassList([oldClasses[0]]);
+    const unknownPalette=structuredClone(appState.classes);
+    assert.equal(await reopen(),false);assert(error.includes('no longer defined'));
+    assert.deepEqual(appState.classes,unknownPalette);assert.equal(writes,0);
+    // Retained name collisions and stale project replies cannot partially update the palette.
+    await savedFile('csv',[annotations[1]]);appState.classes=normalizeClassList([oldClasses[0]]);
+    manifest.retired_classes=[{...oldClasses[1],name:'Cell'}];
+    assert.equal(await reopen(),false);assert(error.includes('another class uses that name'));assert.equal(writes,0);
+    assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));
+    manifest.project_id='project-b';assert.equal(await reopen(),false);assert(error.includes('active project changed'));
+    assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));
+    // COCO's shortened category names must not create a spurious project class.
+    appState=stateStore.createAppState();appState.projectSettings.projectId='project-a';
+    const longName='Microscopy cell '+ 'a'.repeat(70),renamedLong='Reviewed cell '+ 'b'.repeat(70);
+    appState.classes=normalizeClassList([{...oldClasses[0],name:longName}]);appState.nextClassId=20;
+    appState.images=[image];appState.currentImage=image;stateStore.initializeImageState(appState,image.id);
+    format='coco';disk=new Map();writes=0;classSaves=0;autosaves=0;folderLoadFailures.delete(image.file);
+    await saveFolderAnnotations(image,[{...annotations[0],class:longName}],'reviewed');writes=0;
+    appState.classes=normalizeClassList([{...oldClasses[0],name:renamedLong}]);
+    assert(await reopen());assert.equal(appState.classes.length,1);
+    assert.equal(appState.annotationsByImage.get(image.id)[0].class,renamedLong);assert.equal(classSaves,0);
+    const external={images:[{id:1,file_name:image.name,width:100,height:100}],categories:[{id:3,name:'External label'}],
+        annotations:[{id:1,image_id:1,category_id:3,bbox:[10,10,20,20]}]};
+    assert.equal(annotationCodecs.parseAnnotationFile(JSON.stringify(external),'coco',image,{classes:appState.classes}).annotations[0].class,'External label');
+}
+main().catch(error=>{console.error(error);process.exitCode=1;});`,context);
+""", text=True, encoding='utf-8', cwd=Path(__file__).resolve().parents[1], check=True)
+
+
 def test_detection_folder_save_uses_selected_format_and_parent():
     subprocess.run([_node_executable(), "-"], input=r"""
 const assert=require('assert'),fs=require('fs');global.window={};
-for(const name of ['frontendConfig.js','annotationCodecs.js'])eval(fs.readFileSync('static/'+name,'utf8'));
+for(const name of ['frontendConfig.js','annotationCodecs.js','classManager-refined.js','stateStore.js'])eval(fs.readFileSync('static/'+name,'utf8'));
 const annotationCodecs=window.SAM2AnnotationCodecs;
 const source=fs.readFileSync('static/script-refined.js','utf8');
 const body=source.match(/    async function saveFolderAnnotations\(imageRecord, annotations, reviewStatus\) \{([\s\S]*?)\n    \}/)[1];
 let written,format='csv';const disk=new Map();window.SAM2ProjectFolder={read:async(file,name)=>disk.get(name)??null,write:async(...args)=>{disk.set(args[1],args[2]);if(!args[1].endsWith('.review.json'))written=args;}};
-const appState={classes:[{id:1,name:'Cell'}]},folderLoadFailures=new WeakSet();
+const appState={classes:[{id:1,name:'Cell',color:'#39d353',hotkey:'c'}],projectSettings:{projectId:'project-a'}},folderLoadFailures=new WeakSet();
 const save=new Function('annotationCodecs','appState','folderLoadFailures','currentAnnotationFormat','annotationTextHash',`return async function(imageRecord,annotations,reviewStatus){${body}}`)(annotationCodecs,appState,folderLoadFailures,()=>format,async()=> 'testhash');
 const loadBody=source.match(/    async function loadFolderAnnotations\(imageRecord\) \{([\s\S]*?)\n    \}/)[1];
-const load=new Function('annotationCodecs','appState','folderLoadFailures','currentAnnotationFormat','annotationTextHash',`return async function(imageRecord){${loadBody}}`)(annotationCodecs,appState,folderLoadFailures,()=>format,async()=> 'testhash');
+const load=new Function('annotationCodecs','appState','folderLoadFailures','currentAnnotationFormat','annotationTextHash','normalizeClassList','stateStore',`return async function(imageRecord){${loadBody}}`)(annotationCodecs,appState,folderLoadFailures,()=>format,async()=> 'testhash',window.SAM2ClassManager.normalizeClassList,window.SAM2StateStore);
 (async()=>{
  const image={name:'cell with spaces.bmp',file:{},originalImage:{width:100,height:100}},annotations=[{id:1,class:'Cell',bbox:[10,10,20,20]}];
  for(format of ['csv','csv_rich','coco','voc','yolo']){
