@@ -121,6 +121,7 @@
             if (++length > 128) throw new Error('Class name cannot exceed 128 characters.');
             const code = character.codePointAt(0);
             if (code < 32 || code === 127) throw new Error('Class name cannot contain control characters.');
+            if (code >= 0xd800 && code <= 0xdfff) throw new Error('Class name contains an unsupported Unicode character.');
         }
         return name;
     }
@@ -396,7 +397,15 @@
     }
 
     function xmlEscape(value) {
-        return String(value ?? '')
+        const text = String(value ?? '');
+        for (const character of text) {
+            const code = character.codePointAt(0);
+            const valid = code === 9 || code === 10 || code === 13
+                || (code >= 32 && code <= 0xd7ff) || (code >= 0xe000 && code <= 0xfffd)
+                || (code >= 0x10000 && code <= 0x10ffff);
+            if (!valid) throw new Error('VOC XML text contains an unsupported character.');
+        }
+        return text
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')

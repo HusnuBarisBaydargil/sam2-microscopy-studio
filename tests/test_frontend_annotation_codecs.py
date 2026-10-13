@@ -1,6 +1,8 @@
+import json
 import shutil
 import subprocess
 import textwrap
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -288,6 +290,11 @@ for(const name of names){
  // A caller-provided normalizer must not bypass the shared export validation.
  assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes,normalizeAnnotation:item=>item}),/cannot exceed 128 characters/);
 }
+// Unpaired surrogates cannot round-trip through UTF-8 CSV or XML, even inside otherwise short labels.
+for(const code of [0xd800,0xdbff,0xdc00,0xdfff]){
+ const name='x'.repeat(64)+String.fromCharCode(code)+'suffix';
+ assert.throws(()=>codec.buildAnnotationExport(image.name,[{id:1,class:name,bbox:[10,10,20,20]}],format,image),/unsupported Unicode character/);
+}
 // Python counts Unicode code points, so a supported name may occupy more UTF-16 units.
 const name=String.fromCodePoint(0x1f52c).repeat(128),classes=[{id:9,name}],annotations=[{id:1,class:name,bbox:[10,10,20,20]}];
 const output=codec.buildAnnotationExport(image.name,annotations,format,image,{classes});
@@ -318,3 +325,33 @@ for(const code of codes){
 }
 """.replace('FORMAT', annotation_format)
     subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)
+
+
+def test_voc_xml_rejects_forbidden_code_points_and_preserves_valid_unicode():
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,image={name:'cells.png',originalImage:{width:100,height:100}};
+const badCodes=[0xd800,0xdbff,0xdc00,0xdfff,0xfffe,0xffff];
+for(const code of badCodes){
+ const name='x'.repeat(64)+String.fromCodePoint(code)+'suffix',annotations=[{id:1,class:name,bbox:[10,10,20,20]}];
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,'voc',image),/VOC XML text contains an unsupported character|unsupported Unicode character/);
+ const badFile='cells'+String.fromCodePoint(code)+'.png';
+ assert.throws(()=>codec.buildAnnotationExport(badFile,[{...annotations[0],class:'Valid'}],'voc',image),/VOC XML text contains an unsupported character/);
+}
+const validCodes=[0x20,0x85,0xd7ff,0xe000,0xfdd0,0xfffd,0x10000,0x1f52c,0x10ffff];
+const documents=validCodes.map(code=>{
+ const name='x'.repeat(64)+String.fromCodePoint(code)+'suffix';
+ const output=codec.buildAnnotationExport(image.name,[{id:1,class:name,bbox:[10,10,20,20]}],'voc',image);
+ return {name,xml:output.content};
+});
+console.log(JSON.stringify(documents));
+"""
+    result = subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT,
+                            check=True, capture_output=True)
+    for document in json.loads(result.stdout):
+        root = ET.fromstring(document['xml'])
+        assert root.findtext('object/name') == document['name']

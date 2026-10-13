@@ -204,6 +204,12 @@ async function main() {
             assert.equal(writes,0);assert.deepEqual([...disk],bytes);assert.deepEqual(appState,before);
         }
     }
+    await savedFile('voc');const vocBytes=[...disk],vocState=structuredClone(appState);
+    for(const code of [0xd800,0xdbff,0xdc00,0xdfff,0xfffe,0xffff]) {
+        const values=[{...annotations[0],class:'x'.repeat(64)+String.fromCodePoint(code)+'suffix'}];
+        await assert.rejects(saveFolderAnnotations(image,values,'reviewed'),/VOC XML text contains an unsupported character|unsupported Unicode character/);
+        assert.equal(writes,0);assert.deepEqual([...disk],vocBytes);assert.deepEqual(appState,vocState);
+    }
     // Complete COCO names must not create a spurious project class after a rename.
     appState=stateStore.createAppState();appState.projectSettings.projectId='project-a';
     const longName='Microscopy cell '+ 'a'.repeat(70),renamedLong='Reviewed cell '+ 'b'.repeat(70);
