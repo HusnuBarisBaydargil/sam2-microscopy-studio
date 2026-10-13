@@ -189,7 +189,7 @@ const c={window:{confirm:()=>true},appState:state,annotationController:controlle
  currentAnnotations:()=>store.currentAnnotations(state),currentCandidates:()=>store.currentCandidates(state),
  currentHistory:()=>store.currentHistory(state),currentRedoHistory:()=>store.currentRedoHistory(state),
  markCurrentImageDirty:()=>{store.markCurrentImageDirty(state);autosaves++;},
- scheduleProjectClassesSave:()=>classSaves++,renderClassControls:noop,classificationSelect:{value:'Cell'},
+ scheduleProjectClassesSave:()=>classSaves++,scheduleFolderAutosave:()=>autosaves++,renderClassControls:noop,classificationSelect:{value:'Cell'},
  showClassManagerFeedback:text=>feedback=text,clearClassManagerFeedback:()=>feedback='',
  updateStatus:text=>status=text,showToast:noop,updateAnnotationLog:noop,renderImageBrowser:noop,
  updateAnnotationInspector:noop,draw:noop,updateButtonStates:noop};
