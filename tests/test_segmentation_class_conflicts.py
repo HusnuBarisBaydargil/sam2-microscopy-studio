@@ -1,5 +1,7 @@
 import copy
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -193,3 +195,75 @@ function editor(){
 """
     subprocess.run([_node_executable(), '-'], input=script, text=True, encoding='utf-8',
                    cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+@pytest.mark.parametrize('action', ['load', 'import_labelme'])
+def test_segmentation_palette_revision_remains_paired_during_concurrent_class_change(client, app_module, request, monkeypatch, action):
+    headers, image, _ = request.getfixturevalue('polygon_project')
+    initial = client.get('/api/classes', headers=headers).json
+    paused = threading.Event()
+    release = threading.Event()
+    other_started = threading.Event()
+    normalize = app_module.normalize_segmentation_document
+
+    def pause_normalization(*args, **kwargs):
+        if not paused.is_set():
+            paused.set()
+            assert release.wait(10), 'Segmentation request was not released'
+        return normalize(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, 'normalize_segmentation_document', pause_normalization)
+    payload = {'action': action, 'image': image}
+    if action == 'import_labelme':
+        payload.update({'image_name': 'cells.png', 'next_object_id': 2, 'revision': None,
+                        'labelme': {'imagePath': 'cells.png', 'imageWidth': image['width'], 'imageHeight': image['height'],
+                                    'shapes': [{'label': 'Imported', 'shape_type': 'polygon',
+                                                'points': [[10, 10], [30, 10], [20, 30]]}]}})
+
+    def load_or_import():
+        with app_module.app.test_client() as tab:
+            return tab.post('/api/project/segmentation', headers=headers, json=payload)
+
+    def change_classes():
+        other_started.set()
+        with app_module.app.test_client() as tab:
+            current = tab.get('/api/classes', headers=headers).json
+            return tab.post('/api/classes', headers=headers, json={
+                'classes': current['classes'] + [{'name': 'Concurrent class'}],
+                'classes_revision': current['classes_revision'],
+            })
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(load_or_import)
+        try:
+            assert paused.wait(10), 'Segmentation request did not reach the snapshot pause'
+            acquired = app_module.PROJECT_STATE_LOCK.acquire(blocking=False)
+            if acquired:
+                app_module.PROJECT_STATE_LOCK.release()
+            assert not acquired, 'Segmentation requests must hold the project lock through snapshot construction'
+            second = pool.submit(change_classes)
+            assert other_started.wait(10)
+            assert not second.done(), 'Class update escaped the project request lock'
+        finally:
+            release.set()
+        loaded = first.result(timeout=10)
+        changed = second.result(timeout=10)
+    assert loaded.status_code == 200, loaded.json
+    assert changed.status_code == 200, changed.json
+    names = [item['name'] for item in loaded.json['classes']]
+    assert 'Concurrent class' not in names
+    assert ('Imported' in names) == (action == 'import_labelme')
+    # The revision must describe exactly the snapshot returned, not the later global state.
+    expected = {**app_module._project_manifest(), 'classes': loaded.json['classes'],
+                'next_class_id': max(item['id'] for item in loaded.json['classes']) + 1}
+    assert loaded.json['classes_revision'] == app_module._project_classes_revision(expected)
+    if action == 'load':
+        assert loaded.json['classes_revision'] == initial['classes_revision']
+    assert loaded.json['classes_revision'] != changed.json['classes_revision']
+    before = Path(app_module._project_manifest_path()).read_bytes()
+    stale = client.post('/api/classes', headers=headers, json={
+        'classes': loaded.json['classes'], 'classes_revision': loaded.json['classes_revision'],
+    })
+    assert stale.status_code == 409, stale.json
+    assert Path(app_module._project_manifest_path()).read_bytes() == before
+    assert client.get('/api/classes', headers=headers).json == changed.json
