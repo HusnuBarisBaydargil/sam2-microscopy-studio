@@ -856,10 +856,22 @@
                 next[index].hotkey = hotkey;
             } else return;
             const field = input.classList.contains('class-name-input') ? 'name' : input.classList.contains('class-color-input') ? 'color' : 'hotkey';
+            const previous = structuredClone(classes[index]);
+            const renamed = field === 'name' && next[index].name !== previous.name;
             return operate(async () => {
                 try {
-                    const result = await request('api/classes', { classes: next });
-                    if (!disposed) classes = result.classes;
+                    const result = await request('api/classes', { classes: next,
+                        ...(renamed ? { restore_class_id: previous.id } : {}) });
+                    if (disposed) return;
+                    if (renamed && !result.classes.some(item => item.id === previous.id)) {
+                        throw new Error('The original class ID could not be preserved. Reopen the project before renaming.');
+                    }
+                    classes = result.classes;
+                    if (renamed && state) {
+                        state.change(state.document.annotations, state.document.next_object_id, state.proposals,
+                            state.document.labelme, { id: previous.id, index, item: previous, field: 'name' });
+                        await saveChanges();
+                    }
                 } finally {
                     if (!disposed) { input.value = classes[index][field] || ''; renderClasses(); }
                 }
@@ -1294,7 +1306,12 @@
             const classChange = state[direction](classes);
             if (classChange) {
                 const nextClasses = classes.filter(item => item.id !== classChange.id);
-                if (classChange.item) nextClasses.splice(classChange.index, 0, classChange.item);
+                if (classChange.item) {
+                    const currentClass = classes.find(item => item.id === classChange.id);
+                    const restored = classChange.field === 'name' && currentClass
+                        ? { ...currentClass, name: classChange.item.name } : classChange.item;
+                    nextClasses.splice(classChange.index, 0, restored);
+                }
                 try {
                     if (classChange.item && classes.some(item => item.id !== classChange.id && item.name === classChange.item.name)) {
                         throw new Error(`Cannot restore class "${classChange.item.name}": another class uses that name. Rename the conflicting class and retry Undo.`);

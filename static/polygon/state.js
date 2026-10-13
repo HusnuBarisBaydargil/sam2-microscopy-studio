@@ -2,9 +2,11 @@
     function createPolygonState(document) {
         let current = structuredClone(document);
         let saved = JSON.stringify(current);
+        // Class names live outside the document but change its exported labels.
+        let classRevision = 0, savedClassRevision = 0, nextClassRevision = 0;
         const undo = [], redo = [];
         let proposals = [];
-        const snapshot = () => structuredClone({ annotations: current.annotations, labelme: current.labelme, review_status: current.review_status, proposals });
+        const snapshot = () => structuredClone({ annotations: current.annotations, labelme: current.labelme, review_status: current.review_status, proposals, classRevision });
         const classSnapshot = (change, classes) => ({ ...change, item: structuredClone(classes.find(item => item.id === change.id) || null) });
         function restore(previous) {
             current.annotations = previous.annotations;
@@ -13,17 +15,19 @@
             if (previous.review_status === undefined) delete current.review_status;
             else current.review_status = previous.review_status;
             proposals = previous.proposals;
+            classRevision = previous.classRevision;
         }
         return {
             get document() { return current; },
             get proposals() { return proposals; },
             setProposals(items) { undo.push(snapshot()); redo.length = 0; proposals = structuredClone(items); },
-            get dirty() { return JSON.stringify(current) !== saved; },
+            get dirty() { return classRevision !== savedClassRevision || JSON.stringify(current) !== saved; },
             get canUndo() { return undo.length > 0; },
             get canRedo() { return redo.length > 0; },
             change(annotations, nextId = current.next_object_id, nextProposals = proposals, labelme = current.labelme, classChange = null) {
                 undo.push({ ...snapshot(), ...(classChange ? { classChange: structuredClone(classChange) } : {}) });
                 redo.length = 0;
+                if (classChange) classRevision = ++nextClassRevision;
                 current.annotations = structuredClone(annotations);
                 current.review_status = annotations.length ? 'in_progress' : 'unreviewed';
                 proposals = structuredClone(nextProposals);
@@ -51,6 +55,7 @@
             markSaved(document) {
                 current = structuredClone(document);
                 saved = JSON.stringify(current);
+                savedClassRevision = classRevision;
             }
         };
     }
