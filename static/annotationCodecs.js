@@ -413,7 +413,7 @@
         const imageNames = options.imageNames || imageNameAliases(imageRecord);
         if (normalizedFormat === 'csv' || normalizedFormat === 'csv_rich') return parseAnnotationCsv(text, imageNames);
         if (normalizedFormat === 'yolo') return parseAnnotationYolo(text, imageRecord, options.classes);
-        if (normalizedFormat === 'coco') return parseAnnotationCoco(text, imageNames);
+        if (normalizedFormat === 'coco') return parseAnnotationCoco(text, imageNames, options.savedClasses);
         if (normalizedFormat === 'voc') return parseAnnotationVoc(text);
         throw new Error('Unsupported annotation format.');
     }
@@ -500,13 +500,14 @@
         return { annotations, usedMatchedRows: false };
     }
 
-    function parseAnnotationCoco(text, currentImageNames) {
+    function parseAnnotationCoco(text, currentImageNames, savedClasses = []) {
         const data = JSON.parse(text);
         if (!data || typeof data !== 'object') return { annotations: [], usedMatchedRows: false };
 
         const categories = new Map();
+        const savedNames = new Map((Array.isArray(savedClasses) ? savedClasses : []).map(item => [item.id, item.name]));
         (Array.isArray(data.categories) ? data.categories : []).forEach(category => {
-            categories.set(category.id, String(category.name || `category_${category.id}`));
+            categories.set(category.id, String(savedNames.get(category.id) || category.name || `category_${category.id}`));
         });
 
         const images = Array.isArray(data.images) ? data.images : [];
