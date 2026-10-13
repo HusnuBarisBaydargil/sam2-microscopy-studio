@@ -268,3 +268,31 @@ if(format==='coco'){
 if(format==='yolo')assert.deepEqual(output.content.trim().split('\n').map(row=>Number(row.split(' ')[0])),[8,2]);
 """.replace('FORMAT', annotation_format)
     subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)
+
+
+@pytest.mark.parametrize('annotation_format', ['csv', 'csv_rich', 'yolo', 'coco', 'voc'])
+def test_detection_exports_reject_unsupported_class_names_without_truncating(annotation_format):
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,format='FORMAT',image={name:'cells.png',originalImage:{width:100,height:100}};
+const names=['x'.repeat(129),'x'.repeat(128)+'A','x'.repeat(128)+'B'];
+for(const name of names){
+ const annotations=[{id:1,class:name,bbox:[10,10,20,20]}],classes=[{id:9,name}];
+ const before=JSON.stringify({annotations,classes});
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot exceed 128 characters/);
+ assert.equal(JSON.stringify({annotations,classes}),before);
+ // A caller-provided normalizer must not bypass the shared export validation.
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes,normalizeAnnotation:item=>item}),/cannot exceed 128 characters/);
+}
+// Python counts Unicode code points, so a supported name may occupy more UTF-16 units.
+const name=String.fromCodePoint(0x1f52c).repeat(128),classes=[{id:9,name}],annotations=[{id:1,class:name,bbox:[10,10,20,20]}];
+const output=codec.buildAnnotationExport(image.name,annotations,format,image,{classes});
+assert.equal(codec.parseAnnotationFile(output.content,format,image,{classes}).annotations[0].class,name);
+annotations[0].class+=String.fromCodePoint(0x1f52c);
+assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot exceed 128 characters/);
+""".replace('FORMAT', annotation_format)
+    subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)

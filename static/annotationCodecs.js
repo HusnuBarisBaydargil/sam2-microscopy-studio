@@ -52,6 +52,7 @@
         const exportAnnotations = annotations
             .map(normalizeForExport)
             .filter(Boolean);
+        exportAnnotations.forEach(annotation => normalizeClassName(annotation.class || 'Unlabeled'));
 
         if (normalizedFormat === 'csv' || normalizedFormat === 'csv_rich') {
             return {
@@ -113,7 +114,13 @@
     }
 
     function normalizeClassName(value) {
-        return String(value || '').trim();
+        const name = String(value || '').trim();
+        let length = 0;
+        // Count Unicode characters as the server does, stopping before export allocation.
+        for (const character of name) {
+            if (++length > 128) throw new Error('Class name cannot exceed 128 characters.');
+        }
+        return name;
     }
 
     function normalizeClassList(classes) {
