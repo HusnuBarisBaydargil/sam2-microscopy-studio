@@ -2812,6 +2812,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     annotations,
                     reviewStatus,
                     classes: appState.classes,
+                    classesRevision: appState.projectClassesRevision,
                     format: currentAnnotationFormat(),
                     matchMode: annotationMatchModeForImage(imageRecord),
                     imageSize,
@@ -2823,6 +2824,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             );
             if (data.stale || !isCurrent()) return { stale: true };
+            if (data.classes_revision) appState.projectClassesRevision = data.classes_revision;
             imageRecord.reviewStatus = imageController.normalizeReviewStatus(data.review_status, annotations.length);
             imageRecord.reviewClassSignature = stateStore.reviewClassSignature(appState);
             appState.dirtyImages.delete(imageRecord.id);
@@ -2965,6 +2967,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (Array.isArray(data.classes)) {
+                appState.projectClassesRevision = data.classes_revision;
                 appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 applyLoadedClasses(data.classes);
             }
@@ -2983,11 +2986,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function saveProjectClasses({ silent = false } = {}) {
         try {
-            const response = await apiWorkflows.saveClasses(appState.classes);
-            if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
-
+            const response = await apiWorkflows.saveClasses(appState.classes, appState.projectClassesRevision);
             const data = await response.json();
-            if (data.error) throw new Error(data.error);
+            if (!response.ok || data.error) throw new Error(data.error || `Server error: ${response.statusText}`);
+            appState.projectClassesRevision = data.classes_revision;
             if (Array.isArray(data.classes)) {
                 appState.classes = normalizeClassList(data.classes);
                 appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
@@ -3000,6 +3002,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return true;
         } catch (error) {
+            showClassManagerFeedback(`Classes could not be saved: ${error.message}`);
             console.warn('Project classes could not be saved.', error);
             if (!silent) {
                 const msg = `Failed to save project classes: ${error.message}`;

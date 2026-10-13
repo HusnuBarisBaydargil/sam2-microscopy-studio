@@ -75,8 +75,9 @@
         return apiFetch(apiPath('/api/classes'));
     }
 
-    function saveClasses(classes) {
-        return postJson('/api/classes', { classes });
+    function saveClasses(classes, classesRevision) {
+        return postJson('/api/classes', { classes,
+            ...(classesRevision !== undefined ? { classes_revision: classesRevision } : {}) });
     }
 
     window.SAM2ApiWorkflows = {

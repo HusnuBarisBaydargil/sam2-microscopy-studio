@@ -553,17 +553,39 @@ def _preprocess_endpoint_response(method, raw_params):
     except Exception:
         return jsonify({"error": "Failed to process image"}), 500
 
+def _project_classes_revision(manifest):
+    state = {key: manifest.get(key) for key in ("project_id", "next_class_id", "classes", "retired_classes")}
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _check_classes_revision(data):
+    if "classes_revision" not in data:
+        return None  # Keep existing segmentation and external API clients compatible.
+    revision = data["classes_revision"]
+    if not isinstance(revision, str) or not revision:
+        return jsonify({"error": "classes_revision must be a non-empty string"}), 400
+    if revision != _project_classes_revision(_project_manifest()):
+        return jsonify({"error": "Project classes changed in another tab. Your changes remain unsaved. "
+                        "Export your annotations before reopening the project and reapplying the class change.",
+                        "classes_conflict": True}), 409
+    return None
+
+
 @classes_bp.route("/classes", methods=["GET", "POST"])
 def load_classes_endpoint():
     if request.method == "GET":
         return jsonify({
             "classes": _load_project_classes(),
+            "classes_revision": _project_classes_revision(_project_manifest()),
             "next_class_id": _project_manifest()["next_class_id"],
             "classes_path": _public_annotation_path(_project_classes_path()),
         })
 
     data = request.get_json(silent=True) or {}
     try:
+        conflict = _check_classes_revision(data)
+        if conflict is not None:
+            return conflict
         classes = _normalize_classes(data.get("classes", []))
         if "restore_class_id" in data:
             restore_id = data["restore_class_id"]
@@ -579,6 +601,7 @@ def load_classes_endpoint():
             classes = _save_project_classes(classes)
         return jsonify({
             "classes": classes,
+            "classes_revision": _project_classes_revision(_project_manifest()),
             "next_class_id": _project_manifest()["next_class_id"],
             "classes_path": _public_annotation_path(_project_classes_path()),
         })
@@ -1115,6 +1138,9 @@ def save_annotations_endpoint():
 
     try:
         with PROJECT_STATE_LOCK:
+            conflict = _check_classes_revision(data)
+            if conflict is not None:
+                return conflict
             path = _annotation_path_for_image(image_name, image_path, match_mode, annotation_format)
             if recoverable_file_exists(path) and not overwrite:
                 return jsonify({
@@ -1140,6 +1166,7 @@ def save_annotations_endpoint():
             )
             return jsonify({
                 "saved": True,
+                "classes_revision": _project_classes_revision(_project_manifest()),
                 "review_status": review_status,
                 "count": len(annotations),
                 "clamped_count": clamped_count,

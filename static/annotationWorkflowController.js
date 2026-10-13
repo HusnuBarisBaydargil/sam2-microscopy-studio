@@ -277,6 +277,7 @@
         imageRecord,
         annotations,
         classes,
+        classesRevision,
         format,
         matchMode,
         imageSize,
@@ -297,6 +298,7 @@
             image_identity: imageRecord.id,
             annotations,
             classes,
+            ...(classesRevision !== undefined ? { classes_revision: classesRevision } : {}),
             image_width: imageSize ? imageSize.width : null,
             image_height: imageSize ? imageSize.height : null
         };
@@ -304,9 +306,12 @@
         const response = await apiWorkflows.saveAnnotations(payload);
         if (!isCurrent()) return { stale: true };
 
-        if (response.status === 409 && confirmOverwrite) {
+        if (response.status === 409) {
             const conflictData = await response.json();
             if (!isCurrent()) return { stale: true };
+            if (conflictData.classes_conflict || !confirmOverwrite) {
+                throw new Error(conflictData.error || `Server error: ${response.statusText}`);
+            }
             if (!confirmConflict(conflictData)) throw new Error('Save cancelled.');
             if (!isCurrent()) return { stale: true };
 
