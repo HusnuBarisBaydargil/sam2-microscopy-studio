@@ -119,6 +119,8 @@
         // Count Unicode characters as the server does, stopping before export allocation.
         for (const character of name) {
             if (++length > 128) throw new Error('Class name cannot exceed 128 characters.');
+            const code = character.codePointAt(0);
+            if (code < 32 || code === 127) throw new Error('Class name cannot contain control characters.');
         }
         return name;
     }

@@ -296,3 +296,25 @@ annotations[0].class+=String.fromCodePoint(0x1f52c);
 assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot exceed 128 characters/);
 """.replace('FORMAT', annotation_format)
     subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)
+
+
+@pytest.mark.parametrize('annotation_format', ['csv', 'csv_rich', 'yolo', 'coco', 'voc'])
+def test_detection_exports_reject_control_characters_after_character_64(annotation_format):
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,format='FORMAT',image={name:'cells.png',originalImage:{width:100,height:100}};
+const codes=[...Array(32).keys(),127];
+for(const code of codes){
+ const name='x'.repeat(64)+String.fromCharCode(code)+'suffix';
+ const annotations=[{id:1,class:name,bbox:[10,10,20,20]}],classes=[{id:9,name}];
+ const before=JSON.stringify({annotations,classes});
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes}),/cannot contain control characters/);
+ assert.throws(()=>codec.buildAnnotationExport(image.name,annotations,format,image,{classes,normalizeAnnotation:item=>item}),/cannot contain control characters/);
+ assert.equal(JSON.stringify({annotations,classes}),before);
+}
+""".replace('FORMAT', annotation_format)
+    subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)

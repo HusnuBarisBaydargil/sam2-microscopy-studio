@@ -198,9 +198,11 @@ async function main() {
     // Reject unsupported names before either annotation or review sidecar is written.
     for(const kind of ['csv','csv_rich','yolo','coco','voc']) {
         await savedFile(kind);const bytes=[...disk],before=structuredClone(appState);
-        const name='x'.repeat(129),values=[{...annotations[0],class:name}];
-        await assert.rejects(saveFolderAnnotations(image,values,'reviewed'),/cannot exceed 128 characters/);
-        assert.equal(writes,0);assert.deepEqual([...disk],bytes);assert.deepEqual(appState,before);
+        for(const name of ['x'.repeat(129),'x'.repeat(64)+String.fromCharCode(0)+'suffix']) {
+            const values=[{...annotations[0],class:name}];
+            await assert.rejects(saveFolderAnnotations(image,values,'reviewed'),/cannot exceed 128 characters|cannot contain control characters/);
+            assert.equal(writes,0);assert.deepEqual([...disk],bytes);assert.deepEqual(appState,before);
+        }
     }
     // Complete COCO names must not create a spurious project class after a rename.
     appState=stateStore.createAppState();appState.projectSettings.projectId='project-a';
