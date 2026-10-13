@@ -3158,12 +3158,16 @@ ${badgeInfo.title}`;
         annotationSavePending = true;
         updateButtonStates();
         try {
+            const isCurrent = beginAnnotationOperation('save', imageRecord);
+            if (classChangesPending && (!await saveProjectClasses({ silent: true }) || classChangesPending)) {
+                throw new Error('Project classes are not saved. Resolve the class-save error before saving annotations.');
+            }
+            if (!isCurrent()) return { stale: true };
             const imageSize = imageDimensions(imageRecord);
             const annotations = (appState.annotationsByImage.get(imageRecord.id) || [])
                 .map(annotation => normalizeAnnotation(annotation, imageRecord))
                 .filter(Boolean);
             appState.annotationsByImage.set(imageRecord.id, annotations);
-            const isCurrent = beginAnnotationOperation('save', imageRecord);
             const data = window.SAM2ProjectFolder
                 ? await saveFolderAnnotations(imageRecord, annotations, reviewStatus)
                 : await annotationWorkflowController.saveImageAnnotationsToServer(
@@ -3174,6 +3178,7 @@ ${badgeInfo.title}`;
                     annotations,
                     reviewStatus,
                     classes: appState.classes,
+                    classesRevision: appState.projectClassesRevision,
                     format: currentAnnotationFormat(),
                     matchMode: annotationMatchModeForImage(imageRecord),
                     imageSize,
@@ -3185,6 +3190,7 @@ ${badgeInfo.title}`;
                 }
             );
             if (data.stale || !isCurrent()) return { stale: true };
+            if (data.classes_revision) appState.projectClassesRevision = data.classes_revision;
             imageRecord.reviewStatus = imageController.normalizeReviewStatus(data.review_status, annotations.length);
             imageRecord.reviewClassSignature = stateStore.reviewClassSignature(appState);
             appState.dirtyImages.delete(imageRecord.id);
@@ -3329,6 +3335,7 @@ ${badgeInfo.title}`;
 
             const data = await response.json();
             if (Array.isArray(data.classes)) {
+                appState.projectClassesRevision = data.classes_revision;
                 appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 applyLoadedClasses(data.classes);
                 return true;
@@ -3357,15 +3364,14 @@ ${badgeInfo.title}`;
     async function persistProjectClasses({ silent = false } = {}) {
         const snapshot = JSON.stringify(appState.classes);
         try {
-            const response = await apiWorkflows.saveClasses(JSON.parse(snapshot));
-            if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
-
+            const response = await apiWorkflows.saveClasses(JSON.parse(snapshot), appState.projectClassesRevision);
             const data = await response.json();
-            if (data.error) throw new Error(data.error);
+            if (!response.ok || data.error) throw new Error(data.error || `Server error: ${response.statusText}`);
+            appState.projectClassesRevision = data.classes_revision;
+            appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
             if (Array.isArray(data.classes) && JSON.stringify(appState.classes) === snapshot) {
                 classChangesPending = false;
                 appState.classes = normalizeClassList(data.classes);
-                appState.nextClassId = Math.max(Number(data.next_class_id) || 1, appState.nextClassId);
                 renderClassControls(classificationSelect.value);
             }
             if (!silent) {

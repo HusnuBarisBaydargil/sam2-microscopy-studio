@@ -401,6 +401,7 @@ def test_annotation_workflow_controller_updates_state_and_api_payloads():
                 imageRecord,
                 annotations: [{ id: 4, bbox: [1, 2, 3, 4], class: 'nucleus' }],
                 classes: [{ name: 'nucleus' }],
+                classesRevision: 'loaded-revision',
                 format: 'csv',
                 matchMode: 'basename',
                 imageSize: { width: 100, height: 80 },
@@ -416,6 +417,25 @@ def test_annotation_workflow_controller_updates_state_and_api_payloads():
             assert.strictEqual(saved.count, 1);
             assert.strictEqual(apiCalls.at(-1)[0], 'saveAnnotations');
             assert.strictEqual(apiCalls.at(-1)[1].overwrite, true);
+            assert.strictEqual(apiCalls.at(-1)[1].classes_revision, 'loaded-revision');
+            // A class conflict is not an annotation overwrite choice, even in Save as/overwrite flow.
+            const api = context.window.SAM2ApiWorkflows;
+            const originalSave = api.saveAnnotations;
+            let conflictCalls = 0;
+            api.saveAnnotations = async () => {
+                conflictCalls++;
+                return { ok: false, status: 409, json: async () => ({
+                    classes_conflict: true, error: 'Project classes changed in another tab.'
+                }) };
+            };
+            for (const confirmOverwrite of [false, true]) {
+                await assert.rejects(workflow.saveImageAnnotationsToServer(state, {
+                    imageRecord, annotations: [], classes: [], classesRevision: 'stale', format: 'csv',
+                    confirmOverwrite, confirmConflict() { assert.fail('class conflict prompted overwrite'); }
+                }), /changed in another tab/);
+            }
+            assert.strictEqual(conflictCalls, 2);
+            api.saveAnnotations = originalSave;
             assert.strictEqual(apiCalls.at(-1)[1].image_identity, 'img-1');
             assert.strictEqual(apiCalls.at(-1)[1].review_status, 'in_progress');
             assert.strictEqual(state.annotationMatchesByImage.get('img-1').path, 'public:annotations/img-1.csv');

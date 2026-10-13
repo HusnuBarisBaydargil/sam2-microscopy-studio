@@ -28,7 +28,7 @@ for (const image of state.images) store.initializeImageState(state, image.id);
 const loaderState = {hidden: true};
 Object.assign(context, {
     appState: state, stateStore: store, imageController: context.window.SAM2ImageController, apiWorkflows: {},
-    annotationSavePending: false, annotationDirectoryChangePending: false,
+    annotationSavePending: false, annotationDirectoryChangePending: false, classChangesPending: false,
     annotationWorkflowController: {}, loadingRequests: new Map(),
     loader: {classList: {toggle: (_, hidden) => {loaderState.hidden = hidden;}}},
     loaderText: {}, keepAnnotationsInput: {checked: true},
@@ -354,6 +354,16 @@ SCENARIOS = {
         assert.ok(state.dirtyImages.has(a.id));
         assert.strictEqual(state.annotationMatchesByImage.get(a.id), replacementMatch);
         assert.equal(loaderState.hidden, true);
+    """,
+    "class_revision_is_sent_and_updated_after_annotation_save": r"""
+        state.projectClassesRevision = 'loaded';
+        let base;
+        context.annotationWorkflowController.saveImageAnnotationsToServer = async (s, options) => {
+            base = options.classesRevision;
+            return {classes_revision: 'saved', path: 'a.csv'};
+        };
+        await context.saveImageAnnotationsToServer(a);
+        assert.equal(base, 'loaded');assert.equal(state.projectClassesRevision, 'saved');
     """,
     "overlapping_saves_never_dispatch_second_write": r"""
         const request = deferred();
