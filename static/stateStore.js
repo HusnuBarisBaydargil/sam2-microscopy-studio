@@ -17,6 +17,7 @@
             classes: DEFAULT_CLASSES.map(cls => ({ ...cls })),
             nextClassId: 1,
             projectClassesRevision: null,
+            classRestoreIds: [],
             images: [],
             currentImage: null,
             pendingOperations: new Map(),

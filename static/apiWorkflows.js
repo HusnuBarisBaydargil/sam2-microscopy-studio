@@ -75,9 +75,11 @@
         return apiFetch(apiPath('/api/classes'));
     }
 
-    function saveClasses(classes, classesRevision) {
+    function saveClasses(classes, classesRevision, restoreClassIds = []) {
         return postJson('/api/classes', { classes,
-            ...(classesRevision !== undefined ? { classes_revision: classesRevision } : {}) });
+            ...(classesRevision !== undefined ? { classes_revision: classesRevision } : {}),
+            ...(restoreClassIds.length === 1 ? { restore_class_id: restoreClassIds[0] }
+                : restoreClassIds.length ? { restore_class_ids: restoreClassIds } : {}) });
     }
 
     window.SAM2ApiWorkflows = {

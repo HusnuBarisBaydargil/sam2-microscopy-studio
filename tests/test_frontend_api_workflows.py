@@ -195,6 +195,10 @@ def test_api_workflows_build_expected_requests():
             assert.strictEqual(calls.at(-1).init.body, '{"classes":[{"name":"Nucleus"}]}');
             await workflows.saveClasses([{ id: 1, name: 'Nucleus' }], 'loaded-revision');
             assert.strictEqual(calls.at(-1).init.body, '{"classes":[{"id":1,"name":"Nucleus"}],"classes_revision":"loaded-revision"}');
+            await workflows.saveClasses([{ id: 1, name: 'Nucleus' }], 'loaded-revision', [1]);
+            assert.strictEqual(JSON.parse(calls.at(-1).init.body).restore_class_id, 1);
+            await workflows.saveClasses([{ id: 1, name: 'Nucleus' }], 'loaded-revision', [1, 2]);
+            assert.deepStrictEqual(JSON.parse(calls.at(-1).init.body).restore_class_ids, [1, 2]);
         }
 
         main().catch((error) => {

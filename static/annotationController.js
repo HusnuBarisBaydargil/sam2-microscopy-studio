@@ -227,15 +227,34 @@
             return;
         }
         if (command.type === 'remove_class') {
+            const record = command.classRecord.item;
+            // Only legacy history records without IDs fall back to matching by name.
+            const sameClass = classInfo => record.id == null ? classInfo.name === record.name : classInfo.id === record.id;
             if (undo) {
-                if (!classes.some(classInfo => classInfo.name === command.classRecord.item.name)) {
+                if (classes.some(classInfo => classInfo.name === record.name && !sameClass(classInfo))) {
+                    throw new Error(`Cannot restore class "${record.name}": another class uses that name. Rename the conflicting class and retry Undo.`);
+                }
+                const current = classes.find(sameClass);
+                if (current && current.name !== record.name) {
+                    throw new Error(`Cannot restore class "${record.name}": its original ID has a different name. Resolve the class conflict and retry Undo.`);
+                }
+                if (!current) {
                     const index = Math.max(0, Math.min(command.classRecord.index, classes.length));
-                    classes.splice(index, 0, command.classRecord.item);
+                    classes.splice(index, 0, { ...record });
                 }
             } else {
-                const index = classes.findIndex(classInfo => classInfo.name === command.classRecord.item.name);
+                const index = classes.findIndex(sameClass);
                 if (index >= 0) classes.splice(index, 1);
             }
+        }
+    }
+
+    function validateHistoryClasses(command, direction, classes) {
+        if (command.type === 'compound') {
+            const commands = direction === 'undo' ? [...command.commands].reverse() : command.commands;
+            commands.forEach(child => validateHistoryClasses(child, direction, classes));
+        } else if (command.type === 'remove_class') {
+            applyHistoryCommand(command, direction, [], [], classes);
         }
     }
 
@@ -255,16 +274,20 @@
 
     function undoLastAction(annotations, candidates, history, redoHistory, classes = []) {
         if (history.length === 0) return null;
-        const command = history.pop();
+        const command = history[history.length - 1];
+        validateHistoryClasses(command, 'undo', classes.map(classInfo => ({ ...classInfo })));
         applyHistoryCommand(command, 'undo', annotations, candidates, classes);
+        history.pop();
         redoHistory.push(command);
         return historyCommandMessage(command, 'undo');
     }
 
     function redoLastAction(annotations, candidates, history, redoHistory, classes = []) {
         if (redoHistory.length === 0) return null;
-        const command = redoHistory.pop();
+        const command = redoHistory[redoHistory.length - 1];
+        validateHistoryClasses(command, 'redo', classes.map(classInfo => ({ ...classInfo })));
         applyHistoryCommand(command, 'redo', annotations, candidates, classes);
+        redoHistory.pop();
         history.push(command);
         return historyCommandMessage(command, 'redo');
     }

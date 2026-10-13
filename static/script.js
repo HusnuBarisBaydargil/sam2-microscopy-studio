@@ -271,6 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let annotationSavePending = false;
     let annotationDirectoryChangePending = false;
     let classSaveTimer = null;
+    let historyClassFeedback = null;
     let samSettingsReturnFocus = null;
     let preprocessSettingsReturnFocus = null;
     let helpReturnFocus = null;
@@ -1094,14 +1095,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleUndoAction() {
         const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
-        const msg = annotationController.undoLastAction(
-            currentAnnotations(),
-            currentCandidates(),
-            currentHistory(),
-            currentRedoHistory(),
-            appState.classes
-        );
+        const classIdsBefore = new Set(appState.classes.map(classInfo => classInfo.id));
+        let msg;
+        try {
+            msg = annotationController.undoLastAction(
+                currentAnnotations(),
+                currentCandidates(),
+                currentHistory(),
+                currentRedoHistory(),
+                appState.classes
+            );
+        } catch (error) {
+            historyClassFeedback = error.message;
+            showClassManagerFeedback(error.message);
+            updateStatus(error.message);
+            showToast(error.message, 'error');
+            return;
+        }
         if (!msg) return;
+        if (historyClassFeedback && classManagerFeedback.textContent === historyClassFeedback) clearClassManagerFeedback();
+        historyClassFeedback = null;
+        const restoredIds = appState.classes.filter(classInfo => Number.isInteger(classInfo.id)
+            && !classIdsBefore.has(classInfo.id)).map(classInfo => classInfo.id);
+        if (restoredIds.length) appState.classRestoreIds = [...new Set([...(appState.classRestoreIds || []), ...restoredIds])];
 
         if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
             scheduleProjectClassesSave();
@@ -1123,14 +1139,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleRedoAction() {
         const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
-        const msg = annotationController.redoLastAction(
-            currentAnnotations(),
-            currentCandidates(),
-            currentHistory(),
-            currentRedoHistory(),
-            appState.classes
-        );
+        const classIdsBefore = new Set(appState.classes.map(classInfo => classInfo.id));
+        let msg;
+        try {
+            msg = annotationController.redoLastAction(
+                currentAnnotations(),
+                currentCandidates(),
+                currentHistory(),
+                currentRedoHistory(),
+                appState.classes
+            );
+        } catch (error) {
+            historyClassFeedback = error.message;
+            showClassManagerFeedback(error.message);
+            updateStatus(error.message);
+            showToast(error.message, 'error');
+            return;
+        }
         if (!msg) return;
+        if (historyClassFeedback && classManagerFeedback.textContent === historyClassFeedback) clearClassManagerFeedback();
+        historyClassFeedback = null;
+        const restoredIds = appState.classes.filter(classInfo => Number.isInteger(classInfo.id)
+            && !classIdsBefore.has(classInfo.id)).map(classInfo => classInfo.id);
+        if (restoredIds.length) appState.classRestoreIds = [...new Set([...(appState.classRestoreIds || []), ...restoredIds])];
 
         if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
             scheduleProjectClassesSave();
@@ -2985,10 +3016,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function saveProjectClasses({ silent = false } = {}) {
+        const restoreIds = (appState.classRestoreIds || []).filter(id => appState.classes.some(classInfo => classInfo.id === id));
         try {
-            const response = await apiWorkflows.saveClasses(appState.classes, appState.projectClassesRevision);
+            const response = await apiWorkflows.saveClasses(appState.classes, appState.projectClassesRevision, restoreIds);
             const data = await response.json();
             if (!response.ok || data.error) throw new Error(data.error || `Server error: ${response.statusText}`);
+            if (restoreIds.some(id => !data.classes?.some(classInfo => classInfo.id === id))) throw new Error('The original class ID could not be restored.');
+            appState.classRestoreIds = (appState.classRestoreIds || []).filter(id => !restoreIds.includes(id)
+                && appState.classes.some(classInfo => classInfo.id === id));
             appState.projectClassesRevision = data.classes_revision;
             if (Array.isArray(data.classes)) {
                 appState.classes = normalizeClassList(data.classes);
