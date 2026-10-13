@@ -365,7 +365,8 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('segmentationProjectHeading').textContent = project.name;
         document.querySelector('.app-container').classList.toggle('segmentation-project', segmentation);
         if (segmentation && !polygonEditor) {
-            polygonEditor = window.SAM2PolygonEditor.mount(project, { phiSafeMode: phiSafeMode() });
+            polygonEditor = window.SAM2PolygonEditor.mount({ ...project, classes: appState.classes,
+                classes_revision: appState.projectClassesRevision }, { phiSafeMode: phiSafeMode() });
         }
         for (const selector of ['#projectPanel', '.main-content', '#annotationPanel', '.top-load-actions', '.top-save-actions', '.workspace-footer']) {
             document.querySelector(selector).inert = segmentation;

@@ -810,10 +810,9 @@ def segmentation_document_endpoint():
                         return jsonify({"error": f'Cannot restore class "{item["name"]}": another class uses that name. '
                                         'Resolve the duplicate class name and reopen this image. Saved annotations are unchanged.'}), 409
                     names.add(item["name"])
-                manifest = update_manifest_classes(manifest, manifest["classes"] + restored)
-                _save_manifest(manifest)
+                manifest = _save_manifest(update_manifest_classes(manifest, manifest["classes"] + restored))
             return jsonify({"document": document, "revision": revision, "recovered": recovered,
-                            "classes": manifest["classes"]})
+                            "classes": manifest["classes"], "classes_revision": _project_classes_revision(manifest)})
         if action == "import_labelme":
             raw = data.get("labelme")
             image_name = image_basename(data.get("image_name"))
@@ -836,8 +835,9 @@ def segmentation_document_endpoint():
             if "revision" not in data or data["revision"] != revision:
                 return jsonify({"error": "Annotations changed elsewhere. Reopen the image before importing."}), 409
             if updated != manifest:
-                _save_manifest(updated)
-            return jsonify({"document": document, "classes": updated["classes"]})
+                updated = _save_manifest(updated)
+            return jsonify({"document": document, "classes": updated["classes"],
+                            "classes_revision": _project_classes_revision(updated)})
         if action == "merge_preview":
             return jsonify({"geometry": merge_geometries(data.get("geometries"), width, height)})
         if action == "manual_split_preview":
