@@ -2,6 +2,7 @@ import copy
 import subprocess
 from pathlib import Path
 
+import pytest
 from test_frontend_canvas_renderer import _node_executable
 from test_polygon_api import polygon_project  # noqa: F401
 
@@ -116,3 +117,101 @@ def test_class_restore_requires_a_positive_integer_id(client, request, app_modul
         assert response.status_code == 400, response.get_json()
         assert Path(app_module._project_manifest_path()).read_bytes() == before_bytes
     assert client.get('/api/project/manifest').get_json() == before
+
+
+def test_detection_class_history_conflicts_are_atomic_and_redo_uses_ids():
+    subprocess.run([_node_executable(), '-'], input=r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const name of ['frontendConfig','annotationCodecs','annotationController'])eval(fs.readFileSync('static/'+name+'.js','utf8'));
+const controller=window.SAM2AnnotationController;
+const original={id:1,name:'Cell',color:'#123456',hotkey:'c'},other={id:2,name:'Other',color:'#abcdef',hotkey:'o'};
+const classes=[structuredClone(original),structuredClone(other)];
+const annotations=[{id:1,class:'Cell',bbox:[1,2,3,4]},{id:2,class:'Other',bbox:[5,6,7,8]}];
+const history=[],redo=[],candidates=[{id:'candidate',bbox:[10,10,4,4]}];
+controller.deleteClassFromImage(classes,annotations,history,redo,0);
+classes[0].name='Cell';
+const snapshot=()=>structuredClone({classes,annotations,history,redo,candidates});
+const before=snapshot();
+assert.throws(()=>controller.undoLastAction(annotations,candidates,history,redo,classes),/another class uses that name/);
+assert.deepEqual(snapshot(),before);
+// A conflict late in a nested command must not partly undo geometry or annotations.
+const deleteCommand=history[0];
+history[0]={type:'compound',label:'nested action',commands:[deleteCommand,
+ {type:'geometry_edit',changes:[{id:2,oldBbox:[0,0,2,2],newBbox:[5,6,7,8]}]}]};
+const nested=snapshot();
+assert.throws(()=>controller.undoLastAction(annotations,candidates,history,redo,classes),/another class uses that name/);
+assert.deepEqual(snapshot(),nested);
+history[0]=deleteCommand;
+classes[0].name='Other';
+controller.undoLastAction(annotations,candidates,history,redo,classes);
+assert.deepEqual(classes,[original,other]);assert.equal(annotations[0].class,'Cell');
+assert.equal(annotations[0].id,1);assert.deepEqual(annotations[0].bbox,[1,2,3,4]);
+controller.redoLastAction(annotations,candidates,history,redo,classes);
+assert.deepEqual(classes,[other]);assert.equal(annotations.length,1);
+controller.undoLastAction(annotations,candidates,history,redo,classes);
+// Redo must remove the original ID even if its name changes and another ID reuses it.
+classes[0].name='Renamed original';classes[1].name='Cell';
+controller.redoLastAction(annotations,candidates,history,redo,classes);
+assert.deepEqual(classes,[{...other,name:'Cell'}]);assert.equal(classes[0].id,2);
+// When the original ID is already absent, Redo must leave the replacement untouched.
+const absent=[{...other,name:'Cell'}],absentHistory=[],absentRedo=[deleteCommand];
+controller.redoLastAction([],[],absentHistory,absentRedo,absent);
+assert.deepEqual(absent,[{...other,name:'Cell'}]);
+// Reusing the original ID under a different name cannot misclassify restored annotations.
+const reusedId=[{...original,name:'Different name'}],idHistory=[deleteCommand],idRedo=[];
+const idBefore=structuredClone({reusedId,idHistory,idRedo});
+assert.throws(()=>controller.undoLastAction([],[],idHistory,idRedo,reusedId),/different name/);
+assert.deepEqual({reusedId,idHistory,idRedo},idBefore);
+""", text=True, encoding='utf-8', cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+@pytest.mark.parametrize('script_name', ['script.js', 'script-refined.js'])
+def test_detection_undo_conflict_feedback_and_retry_preserve_local_state(script_name):
+    script = r"""
+const fs=require('fs'),assert=require('assert'),vm=require('vm');global.window={};
+for(const name of ['frontendConfig','annotationCodecs','annotationController','stateStore','classManager-refined'])eval(fs.readFileSync('static/'+name+'.js','utf8'));
+const store=window.SAM2StateStore,controller=window.SAM2AnnotationController,state=store.createAppState();
+const image={id:'image',reviewStatus:'in_progress'},otherImage={id:'other',reviewStatus:'reviewed'};
+state.images=[image,otherImage];state.currentImage=image;
+for(const record of state.images)store.initializeImageState(state,record.id);
+state.classes=[{id:1,name:'Cell',color:'#123456',hotkey:'c'},{id:2,name:'Other',color:'#abcdef',hotkey:'o'},
+ {id:3,name:'Unrelated',color:'#654321',hotkey:'r'}];
+state.annotationsByImage.set(image.id,[{id:1,class:'Cell',bbox:[1,2,3,4]}]);
+state.annotationsByImage.set(otherImage.id,[{id:7,class:'Unrelated',bbox:[10,10,4,4]}]);
+state.cameraOffset={x:27,y:-14};state.selectedAnnotationIds.add(1);state.selectedCandidateIds.add('candidate');
+const beforeDelete=structuredClone(state.classes);
+controller.deleteClassFromImage(state.classes,store.currentAnnotations(state),store.currentHistory(state),store.currentRedoHistory(state),0);
+let classSaves=0,autosaves=0,feedback='',status='';const noop=()=>{};
+const c={window:{confirm:()=>true},appState:state,annotationController:controller,
+ normalizeClassName:window.SAM2ClassManager.normalizeClassName,
+ countAnnotationsWithClass:name=>controller.countAnnotationsWithClass(state.annotationsByImage,name),
+ currentAnnotations:()=>store.currentAnnotations(state),currentCandidates:()=>store.currentCandidates(state),
+ currentHistory:()=>store.currentHistory(state),currentRedoHistory:()=>store.currentRedoHistory(state),
+ markCurrentImageDirty:()=>{store.markCurrentImageDirty(state);autosaves++;},
+ scheduleProjectClassesSave:()=>classSaves++,renderClassControls:noop,classificationSelect:{value:'Cell'},
+ showClassManagerFeedback:text=>feedback=text,clearClassManagerFeedback:()=>feedback='',
+ updateStatus:text=>status=text,showToast:noop,updateAnnotationLog:noop,renderImageBrowser:noop,
+ updateAnnotationInspector:noop,draw:noop,updateButtonStates:noop};
+vm.createContext(c);
+const source=fs.readFileSync('static/SCRIPT_NAME','utf8'),starts=[...source.matchAll(/^    (?:async )?function (\w+)\(/gm)];
+const names=new Set(['commitClassRename','renameAnnotationClass','clearAllAnnotationHistory','handleUndoAction','handleRedoAction']);
+for(let i=0;i<starts.length;i++)if(names.has(starts[i][1]))vm.runInContext(source.slice(starts[i].index,starts[i+1]?.index??source.length),c);
+// Exact audit sequence: delete Cell, rename unused Other to Cell, then press Undo.
+c.commitClassRename(0,'Cell');classSaves=0;autosaves=0;
+const before=structuredClone(state);
+c.handleUndoAction();
+assert(feedback.includes('another class uses that name'));assert(status.includes('retry Undo'));
+assert.deepEqual(state,before);assert.equal(classSaves,0);assert.equal(autosaves,0);
+assert.equal(store.currentHistory(state).length,1);assert.equal(store.currentRedoHistory(state).length,0);
+// Resolve the name conflict and retry the same history entry.
+c.commitClassRename(0,'Other');classSaves=0;autosaves=0;
+c.handleUndoAction();assert.equal(feedback,'');assert.deepEqual(state.classes,beforeDelete);
+assert.equal(store.currentAnnotations(state)[0].id,1);assert.equal(classSaves,1);assert.equal(autosaves,1);
+assert(state.dirtyImages.has(image.id));assert.equal(image.reviewStatus,'in_progress');
+assert.deepEqual(state.cameraOffset,{x:27,y:-14});
+assert.deepEqual(state.annotationsByImage.get(otherImage.id),[{id:7,class:'Unrelated',bbox:[10,10,4,4]}]);
+c.handleRedoAction();assert.deepEqual(state.classes,beforeDelete.slice(1));assert.equal(store.currentAnnotations(state).length,0);
+assert.equal(classSaves,2);assert.equal(autosaves,2);assert.deepEqual(state.cameraOffset,{x:27,y:-14});
+""".replace('SCRIPT_NAME', script_name)
+    subprocess.run([_node_executable(), '-'], input=script, text=True, encoding='utf-8',
+                   cwd=Path(__file__).resolve().parents[1], check=True)

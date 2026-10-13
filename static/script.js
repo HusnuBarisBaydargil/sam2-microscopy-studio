@@ -1094,14 +1094,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleUndoAction() {
         const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
-        const msg = annotationController.undoLastAction(
-            currentAnnotations(),
-            currentCandidates(),
-            currentHistory(),
-            currentRedoHistory(),
-            appState.classes
-        );
+        let msg;
+        try {
+            msg = annotationController.undoLastAction(
+                currentAnnotations(),
+                currentCandidates(),
+                currentHistory(),
+                currentRedoHistory(),
+                appState.classes
+            );
+        } catch (error) {
+            showClassManagerFeedback(error.message);
+            updateStatus(error.message);
+            showToast(error.message, 'error');
+            return;
+        }
         if (!msg) return;
+        clearClassManagerFeedback();
 
         if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
             scheduleProjectClassesSave();
@@ -1123,14 +1132,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleRedoAction() {
         const classNamesBefore = appState.classes.map(classInfo => classInfo.name).join('\u0000');
-        const msg = annotationController.redoLastAction(
-            currentAnnotations(),
-            currentCandidates(),
-            currentHistory(),
-            currentRedoHistory(),
-            appState.classes
-        );
+        let msg;
+        try {
+            msg = annotationController.redoLastAction(
+                currentAnnotations(),
+                currentCandidates(),
+                currentHistory(),
+                currentRedoHistory(),
+                appState.classes
+            );
+        } catch (error) {
+            showClassManagerFeedback(error.message);
+            updateStatus(error.message);
+            showToast(error.message, 'error');
+            return;
+        }
         if (!msg) return;
+        clearClassManagerFeedback();
 
         if (classNamesBefore !== appState.classes.map(classInfo => classInfo.name).join('\u0000')) {
             scheduleProjectClassesSave();
