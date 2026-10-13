@@ -1569,6 +1569,7 @@ ${badgeInfo.title}`;
         if (changedCount > 0) clearAllAnnotationHistory();
         scheduleProjectClassesSave();
         renderClassControls(newName);
+        scheduleFolderAutosave();
         updateAnnotationLog();
         draw();
 
