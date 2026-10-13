@@ -236,3 +236,35 @@ def test_annotation_codecs_round_trip_supported_formats():
     )
 
     subprocess.run([node, "-e", js_test], cwd=REPO_ROOT, check=True)
+
+
+@pytest.mark.parametrize('annotation_format', ['csv', 'csv_rich', 'yolo', 'coco', 'voc'])
+def test_detection_formats_preserve_distinct_128_character_class_names(annotation_format):
+    node = _node_executable()
+    if node is None:
+        pytest.skip('Node.js is not available to execute annotationCodecs.js')
+    script = r"""
+const fs=require('fs'),assert=require('assert');global.window={};
+for(const module of ['frontendConfig','annotationCodecs'])eval(fs.readFileSync('static/'+module+'.js','utf8'));
+const codec=window.SAM2AnnotationCodecs,format='FORMAT';
+const prefix='Microscopy '+ 'x'.repeat(53),suffix='&<>"\''+String.fromCharCode(181)+'y'.repeat(57);
+const names=[prefix+suffix+'A',prefix+suffix+'B'];
+assert(names.every(name=>name.length===128));assert.equal(names[0].slice(0,64),names[1].slice(0,64));
+const classes=names.map((name,i)=>({id:[9,3][i],name,color:i?'#abcdef':'#123456',hotkey:i?'o':'c'}));
+const annotations=names.map((name,i)=>({id:i+1,class:name,bbox:[10+i*30,10,20,20],type:'manual'}));
+const image={name:'cells.png',originalImage:{width:100,height:100}};
+const output=codec.buildAnnotationExport(image.name,annotations,format,image,{classes});
+// These are standard exports: COCO/VOC must retain labels without a review sidecar.
+const parsed=codec.parseAnnotationFile(output.content,format,image,{classes:classes.slice().reverse()});
+assert.deepEqual(parsed.annotations.map(item=>item.class),names);
+for(let i=0;i<annotations.length;i++)for(let j=0;j<4;j++)assert(Math.abs(parsed.annotations[i].bbox[j]-annotations[i].bbox[j])<1e-8);
+if(format==='coco'){
+ const data=JSON.parse(output.content);
+ assert.deepEqual(data.categories.map(item=>[item.id,item.name]),classes.map(item=>[item.id,item.name]));
+ assert.deepEqual(data.annotations.map(item=>item.category_id),[9,3]);
+ const withSidecar=codec.parseAnnotationFile(output.content,format,image,{savedClasses:classes});
+ assert.deepEqual(withSidecar.annotations.map(item=>item.class),names);
+}
+if(format==='yolo')assert.deepEqual(output.content.trim().split('\n').map(row=>Number(row.split(' ')[0])),[8,2]);
+""".replace('FORMAT', annotation_format)
+    subprocess.run([node, '-'], input=script, text=True, encoding='utf-8', cwd=REPO_ROOT, check=True)

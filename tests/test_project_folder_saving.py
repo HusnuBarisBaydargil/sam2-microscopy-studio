@@ -181,7 +181,21 @@ async function main() {
     assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));
     manifest.project_id='project-b';assert.equal(await reopen(),false);assert(error.includes('active project changed'));
     assert.deepEqual(appState.classes,normalizeClassList([oldClasses[0]]));
-    // COCO's shortened category names must not create a spurious project class.
+    // Full supported names sharing a 64-character prefix survive folder autosave and reopen.
+    for(const kind of ['csv','csv_rich','yolo','coco','voc']) {
+        await savedFile(kind);
+        const prefix='Microscopy '+ 'x'.repeat(53),names=[prefix+'a'.repeat(63)+'A',prefix+'a'.repeat(63)+'B'];
+        const palette=normalizeClassList(oldClasses.map((item,index)=>({...item,name:names[index]})));
+        appState.classes=palette;const values=annotations.map((item,index)=>({...item,class:names[index]}));
+        await saveFolderAnnotations(image,values,'reviewed');writes=0;classSaves=0;autosaves=0;
+        appState.classes=palette.slice().reverse();
+        const expected=structuredClone(appState.classes);
+        assert(await reopen());assert.deepEqual(appState.classes,expected);
+        assert.deepEqual(appState.annotationsByImage.get(image.id).map(item=>item.class),names);
+        assert.equal(image.reviewStatus,'reviewed');assert.equal(classSaves,0);assert.equal(autosaves,0);assert.equal(writes,0);
+        assert.equal(appState.classes.length,2);assert.equal(appState.nextClassId,20);
+    }
+    // Complete COCO names must not create a spurious project class after a rename.
     appState=stateStore.createAppState();appState.projectSettings.projectId='project-a';
     const longName='Microscopy cell '+ 'a'.repeat(70),renamedLong='Reviewed cell '+ 'b'.repeat(70);
     appState.classes=normalizeClassList([{...oldClasses[0],name:longName}]);appState.nextClassId=20;

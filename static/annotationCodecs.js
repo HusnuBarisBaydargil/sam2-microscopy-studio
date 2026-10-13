@@ -113,7 +113,7 @@
     }
 
     function normalizeClassName(value) {
-        return String(value || '').trim().slice(0, 64);
+        return String(value || '').trim();
     }
 
     function normalizeClassList(classes) {
