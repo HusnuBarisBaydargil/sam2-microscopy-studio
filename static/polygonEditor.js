@@ -15,6 +15,7 @@
         const drawingTools = { Draw: 'polygon', Rectangle: 'rectangle', Circle: 'circle' };
         const requiredPoints = () => drawingTool === 'polygon' ? 3 : 2;
         let classes = project.classes.slice(), busy = false, queue = [], currentIndex = -1;
+        let classesRevision = project.classes_revision ?? null;
         let folderAnnotations = new Map();
         const imageReviews = new Map();
         let queueFilter = 'all', queueScan = null, queueRenderKey = '';
@@ -814,9 +815,9 @@
             const affected = state?.document.annotations.filter(item => item.class_id === target.id).length || 0;
             if (!window.confirm(`Are you sure you want to delete the class "${target.name}" and remove ${affected} annotations?\n\nOnly the current image is affected. Other images keep their annotations.`)) return;
             return operate(async () => {
-                const result = await request('api/classes', { classes: classes.filter(item => item.id !== target.id) });
+                const result = await request('api/classes', { classes: classes.filter(item => item.id !== target.id), classes_revision: classesRevision });
                 if (disposed) return;
-                classes = result.classes;
+                classes = result.classes; classesRevision = result.classes_revision ?? null;
                 renderClasses();
                 if (state) {
                     state.change(state.document.annotations.filter(item => item.class_id !== target.id),
@@ -860,13 +861,13 @@
             const renamed = field === 'name' && next[index].name !== previous.name;
             return operate(async () => {
                 try {
-                    const result = await request('api/classes', { classes: next,
+                    const result = await request('api/classes', { classes: next, classes_revision: classesRevision,
                         ...(renamed ? { restore_class_id: previous.id } : {}) });
                     if (disposed) return;
                     if (renamed && !result.classes.some(item => item.id === previous.id)) {
                         throw new Error('The original class ID could not be preserved. Reopen the project before renaming.');
                     }
-                    classes = result.classes;
+                    classes = result.classes; classesRevision = result.classes_revision ?? null;
                     if (renamed && state) {
                         state.change(state.document.annotations, state.document.next_object_id, state.proposals,
                             state.document.labelme, { id: previous.id, index, item: previous, field: 'name' });
@@ -910,7 +911,7 @@
                     ...(localAutosave !== null ? { labelme: localAutosave, image_name: file.name } : {}),
                 });
                 if (disposed) return;
-                if (Array.isArray(loaded.classes)) { classes = loaded.classes; renderClasses(); }
+                if (Array.isArray(loaded.classes)) { classes = loaded.classes; classesRevision = loaded.classes_revision ?? null; renderClasses(); }
                 // The file beside the image is authoritative, including an empty annotation.
                 if (localAnnotation !== null && localAutosave === null) loaded.document = { schema_version: 1, task_type: 'instance_segmentation',
                     project_id: loaded.document.project_id, image, next_object_id: loaded.document.next_object_id, annotations: [] };
@@ -1015,7 +1016,7 @@
                 image: state.document.image, image_name: queue[currentIndex].name || 'image.png',
                 next_object_id: state.document.next_object_id, revision, labelme: raw });
             if (disposed || state !== sourceState) return;
-            classes = result.classes; renderClasses();
+            classes = result.classes; classesRevision = result.classes_revision ?? null; renderClasses();
             folderLoadFailed = false;
             if (!persist) {
                 state = createPolygonState(result.document);
@@ -1136,9 +1137,9 @@
             return operate(async () => {
                 const newClass = window.SAM2ClassManager.buildNewClass(name, classes, 1, reservedHotkeys);
                 delete newClass.id; // The server allocates IDs, including after earlier removals.
-                const result = await request('api/classes', { classes: [...classes, newClass] });
+                const result = await request('api/classes', { classes: [...classes, newClass], classes_revision: classesRevision });
                 if (disposed) return;
-                classes = result.classes;
+                classes = result.classes; classesRevision = result.classes_revision ?? null;
                 byId('ClassSearch').value = '';
                 renderClasses(String(classes.find(cls => cls.name === name).id));
                 byId('ClassName').value = '';
@@ -1316,13 +1317,13 @@
                     if (classChange.item && classes.some(item => item.id !== classChange.id && item.name === classChange.item.name)) {
                         throw new Error(`Cannot restore class "${classChange.item.name}": another class uses that name. Rename the conflicting class and retry Undo.`);
                     }
-                    const result = await request('api/classes', { classes: nextClasses,
+                    const result = await request('api/classes', { classes: nextClasses, classes_revision: classesRevision,
                         ...(classChange.item ? { restore_class_id: classChange.id } : {}) });
                     if (disposed) return;
                     if (classChange.item && !result.classes.some(item => item.id === classChange.id)) {
                         throw new Error('The original class ID could not be restored. Resolve the class-name conflict and retry Undo.');
                     }
-                    classes = result.classes;
+                    classes = result.classes; classesRevision = result.classes_revision ?? null;
                 } catch (error) {
                     state[direction === 'undo' ? 'redo' : 'undo'](nextClasses);
                     throw error;

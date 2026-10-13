@@ -813,7 +813,7 @@ def segmentation_document_endpoint():
                 manifest = update_manifest_classes(manifest, manifest["classes"] + restored)
                 _save_manifest(manifest)
             return jsonify({"document": document, "revision": revision, "recovered": recovered,
-                            "classes": manifest["classes"]})
+                            "classes": manifest["classes"], "classes_revision": _project_classes_revision(_project_manifest())})
         if action == "import_labelme":
             raw = data.get("labelme")
             image_name = image_basename(data.get("image_name"))
@@ -837,7 +837,8 @@ def segmentation_document_endpoint():
                 return jsonify({"error": "Annotations changed elsewhere. Reopen the image before importing."}), 409
             if updated != manifest:
                 _save_manifest(updated)
-            return jsonify({"document": document, "classes": updated["classes"]})
+            return jsonify({"document": document, "classes": updated["classes"],
+                            "classes_revision": _project_classes_revision(_project_manifest())})
         if action == "merge_preview":
             return jsonify({"geometry": merge_geometries(data.get("geometries"), width, height)})
         if action == "manual_split_preview":
