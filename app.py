@@ -587,13 +587,21 @@ def load_classes_endpoint():
         if conflict is not None:
             return conflict
         classes = _normalize_classes(data.get("classes", []))
+        restore_ids = []
         if "restore_class_id" in data:
             restore_id = data["restore_class_id"]
             if type(restore_id) is not int or restore_id < 1:
                 return jsonify({"error": "restore_class_id must be a positive integer"}), 400
-            # Validate the restoration before writing; name normalization can drop or remap an ID.
+            restore_ids.append(restore_id)
+        if "restore_class_ids" in data:
+            values = data["restore_class_ids"]
+            if not isinstance(values, list) or not values or any(type(value) is not int or value < 1 for value in values):
+                return jsonify({"error": "restore_class_ids must be a non-empty list of positive integers"}), 400
+            restore_ids.extend(values)
+        if restore_ids:
+            # Validate every queued restoration before writing; normalization can drop or remap IDs.
             manifest = update_manifest_classes(_project_manifest(), classes)
-            if restore_id not in {item["id"] for item in manifest["classes"]}:
+            if not set(restore_ids).issubset({item["id"] for item in manifest["classes"]}):
                 return jsonify({"error": "The original class ID could not be restored. "
                                 "Resolve the class-name conflict and retry Undo."}), 409
             classes = _save_manifest(manifest)["classes"]

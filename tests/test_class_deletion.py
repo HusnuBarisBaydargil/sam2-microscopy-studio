@@ -182,7 +182,8 @@ state.cameraOffset={x:27,y:-14};state.selectedAnnotationIds.add(1);state.selecte
 const beforeDelete=structuredClone(state.classes);
 controller.deleteClassFromImage(state.classes,store.currentAnnotations(state),store.currentHistory(state),store.currentRedoHistory(state),0);
 let classSaves=0,autosaves=0,feedback='',status='';const noop=()=>{};
-const c={window:{confirm:()=>true},appState:state,annotationController:controller,
+const c={window:{confirm:()=>true},appState:state,annotationController:controller,historyClassFeedback:null,
+ classManagerFeedback:{get textContent(){return feedback;}},
  normalizeClassName:window.SAM2ClassManager.normalizeClassName,
  countAnnotationsWithClass:name=>controller.countAnnotationsWithClass(state.annotationsByImage,name),
  currentAnnotations:()=>store.currentAnnotations(state),currentCandidates:()=>store.currentCandidates(state),
@@ -207,11 +208,105 @@ assert.equal(store.currentHistory(state).length,1);assert.equal(store.currentRed
 c.commitClassRename(0,'Other');classSaves=0;autosaves=0;
 c.handleUndoAction();assert.equal(feedback,'');assert.deepEqual(state.classes,beforeDelete);
 assert.equal(store.currentAnnotations(state)[0].id,1);assert.equal(classSaves,1);assert.equal(autosaves,1);
+assert.deepEqual(Array.from(state.classRestoreIds),[1]);
 assert(state.dirtyImages.has(image.id));assert.equal(image.reviewStatus,'in_progress');
 assert.deepEqual(state.cameraOffset,{x:27,y:-14});
 assert.deepEqual(state.annotationsByImage.get(otherImage.id),[{id:7,class:'Unrelated',bbox:[10,10,4,4]}]);
 c.handleRedoAction();assert.deepEqual(state.classes,beforeDelete.slice(1));assert.equal(store.currentAnnotations(state).length,0);
 assert.equal(classSaves,2);assert.equal(autosaves,2);assert.deepEqual(state.cameraOffset,{x:27,y:-14});
+// Annotation-only Undo/Redo must not hide an unrelated failed class autosave.
+feedback='Classes could not be saved: Project classes changed in another tab.';
+const saveError=feedback;
+c.historyClassFeedback='An earlier history conflict';
+const item={id:9,class:'Unrelated',bbox:[4,4,2,2]};
+store.currentAnnotations(state).push(item);
+store.currentHistory(state).push({type:'create_annotations',annotationRecords:[{index:0,item:structuredClone(item)}]});
+c.handleUndoAction();assert.equal(feedback,saveError);
+c.handleRedoAction();assert.equal(feedback,saveError);
+
+""".replace('SCRIPT_NAME', script_name)
+    subprocess.run([_node_executable(), '-'], input=script, text=True, encoding='utf-8',
+                   cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_detection_undo_save_rejects_remapping_after_retired_class_rename(client, app_module):
+    original = client.post('/api/classes', json={'classes': [{'name': 'Unused'}]}).json['classes'][0]
+    assert client.post('/api/classes', json={'classes': []}).status_code == 200
+    assert client.post('/api/classes', json={'classes': [original], 'restore_class_id': original['id']}).status_code == 200
+    renamed = {**original, 'name': 'Renamed unused'}
+    assert client.post('/api/classes', json={'classes': [renamed]}).status_code == 200
+    assert client.post('/api/classes', json={'classes': []}).status_code == 200
+    before = Path(app_module._project_manifest_path()).read_bytes()
+    # The second Undo must reject instead of returning a fresh ID under the original name.
+    revision = client.get('/api/classes').json['classes_revision']
+    rejected = client.post('/api/classes', json={
+        'classes': [original], 'restore_class_id': original['id'], 'classes_revision': revision,
+    })
+    assert rejected.status_code == 409, rejected.json
+    assert Path(app_module._project_manifest_path()).read_bytes() == before
+    assert client.get('/api/classes').json['classes_revision'] == revision
+    # A matching retained definition can still be restored under the original ID.
+    accepted = client.post('/api/classes', json={
+        'classes': [renamed], 'restore_class_id': original['id'], 'classes_revision': revision,
+    })
+    assert accepted.status_code == 200, accepted.json
+    assert accepted.json['classes'] == [renamed]
+
+
+def test_queued_class_restorations_are_all_validated_before_save(client, app_module):
+    originals = client.post('/api/classes', json={'classes': [{'name': 'A'}, {'name': 'B'}]}).json['classes']
+    renamed = [{**item, 'name': item['name'] + ' renamed'} for item in originals]
+    assert client.post('/api/classes', json={'classes': renamed}).status_code == 200
+    assert client.post('/api/classes', json={'classes': []}).status_code == 200
+    before = Path(app_module._project_manifest_path()).read_bytes()
+    ids = [item['id'] for item in originals]
+    result = client.post('/api/classes', json={
+        'classes': [originals[0], renamed[1]], 'restore_class_ids': ids,
+    })
+    assert result.status_code == 409, result.json
+    assert Path(app_module._project_manifest_path()).read_bytes() == before
+    for invalid in (None, [], True, [True], [0], ['1']):
+        result = client.post('/api/classes', json={'classes': renamed, 'restore_class_ids': invalid})
+        assert result.status_code == 400, result.json
+        assert Path(app_module._project_manifest_path()).read_bytes() == before
+    result = client.post('/api/classes', json={'classes': renamed, 'restore_class_ids': ids})
+    assert result.status_code == 200, result.json
+    assert result.json['classes'] == renamed
+
+
+@pytest.mark.parametrize('script_name', ['script.js', 'script-refined.js'])
+def test_detection_class_save_carries_restored_ids_and_keeps_failed_restore_pending(script_name):
+    script = r"""
+const fs=require('fs'),assert=require('assert'),vm=require('vm');
+const source=fs.readFileSync('static/SCRIPT_NAME','utf8');
+const state={classes:[{id:1,name:'Original'},{id:2,name:'Other'}],nextClassId:3,projectClassesRevision:'before',classRestoreIds:[1,2]};
+let sent,mode='reject',feedback='';
+const noop=()=>{};
+const c={appState:state,console,classChangesPending:true,classificationSelect:{value:'Original'},
+ normalizeClassList:x=>x,renderClassControls:noop,updateButtonStates:noop,updateStatus:noop,showToast:noop,
+ showClassManagerFeedback:text=>feedback=text,
+ apiWorkflows:{saveClasses:async(classes,revision,restoreIds)=>{
+  sent={classes:structuredClone(classes),revision,restoreIds:Array.from(restoreIds)};
+  if(mode==='reject')return {ok:false,status:409,json:async()=>({error:'The original class ID could not be restored.'})};
+  if(mode==='remap')return {ok:true,json:async()=>({classes:[{id:3,name:'Original'},{id:2,name:'Other'}],classes_revision:'bad',next_class_id:4})};
+  return {ok:true,json:async()=>({classes:structuredClone(classes),classes_revision:'after',next_class_id:3})};
+ }} };
+vm.createContext(c);
+const name='SCRIPT_NAME'==='script.js'?'saveProjectClasses':'persistProjectClasses';
+const starts=[...source.matchAll(/^    (?:async )?function (\w+)\(/gm)],index=starts.findIndex(item=>item[1]===name);
+vm.runInContext(source.slice(starts[index].index,starts[index+1].index),c);
+(async()=>{
+ const before=structuredClone(state);
+ assert.equal(await c[name]({silent:true}),false);
+ assert.deepEqual(sent.restoreIds,[1,2]);assert.equal(sent.revision,'before');assert.deepEqual(state,before);
+ assert(feedback.includes('original class ID'));
+ mode='remap';assert.equal(await c[name]({silent:true}),false);assert.deepEqual(state,before);
+ mode='accept';assert(await c[name]({silent:true}));assert.deepEqual(Array.from(state.classRestoreIds),[]);
+ assert.equal(state.classes[0].id,1);assert.equal(state.projectClassesRevision,'after');
+ // Redo can remove a locally restored class before its debounced save executes.
+ state.classRestoreIds=[1,2];state.classes=state.classes.filter(item=>item.id!==1);
+ assert(await c[name]({silent:true}));assert.deepEqual(sent.restoreIds,[2]);assert.deepEqual(Array.from(state.classRestoreIds),[]);
+})().catch(e=>{console.error(e);process.exitCode=1;});
 """.replace('SCRIPT_NAME', script_name)
     subprocess.run([_node_executable(), '-'], input=script, text=True, encoding='utf-8',
                    cwd=Path(__file__).resolve().parents[1], check=True)
