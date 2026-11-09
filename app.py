@@ -49,6 +49,7 @@ from image_io import (
     _validate_uploaded_image_file,
 )
 from labelme_io import (
+    STUDIO_KEY,
     export_labelme,
     image_basename,
     import_labelme,
@@ -772,7 +773,7 @@ def segmentation_document_endpoint():
             image_name = image_basename(data.get("image_name"))
             if isinstance(raw, dict) and raw.get("imagePath") == _public_image_name(image_name):
                 image_name = _public_image_name(image_name)
-            inspect_labelme(raw, image, image_name)
+            inspect_labelme(raw, image, image_name, for_import=isinstance(raw, dict) and STUDIO_KEY not in raw)
             return jsonify({"review_status": labelme_review_status(raw, manifest["project_id"]),
                             "count": len(raw["shapes"])})
         if action == "load":
@@ -818,7 +819,7 @@ def segmentation_document_endpoint():
             image_name = image_basename(data.get("image_name"))
             if isinstance(raw, dict) and raw.get("imagePath") == _public_image_name(image_name):
                 image_name = _public_image_name(image_name)
-            labels = inspect_labelme(raw, image, image_name)
+            labels = inspect_labelme(raw, image, image_name, for_import=True)
             next_id = data.get("next_object_id")
             if type(next_id) is not int or next_id < 1:
                 raise ValueError("next_object_id must be a positive integer")

@@ -3,14 +3,18 @@
     const locations = new WeakMap();
     const workspaces = new Map();
     let database = null, saveQueue = Promise.resolve(), selectionVersion = 0, picking = false, bookmarkTime = 0;
-    async function open() {
+    async function withFolderPicker(select) {
         if (!window.showDirectoryPicker) throw new Error('Saving beside images requires Chrome or Edge. Open this app there and choose Open folder.');
+        if (picking) throw new DOMException('Folder selection already in progress.', 'AbortError');
         selectionVersion++;
         picking = true;
-        try { return await readDirectory(await window.showDirectoryPicker({ mode: 'readwrite' })); }
+        try { return await select(); }
         finally { picking = false; }
     }
-    async function readDirectory(root) {
+    function open() {
+        return withFolderPicker(async () => readDirectory(await window.showDirectoryPicker({ mode: 'readwrite' })));
+    }
+    async function readDirectory(root, selectedNames = null) {
         const files = [];
         async function visit(directory, prefix) {
             const entries = [];
@@ -23,6 +27,7 @@
             }
             for (const entry of entries) {
                 if (entry.kind === 'directory') { await visit(entry, `${prefix}${entry.name}/`); continue; }
+                if (selectedNames && !selectedNames.has(entry.name)) continue;
                 if (!window.SAM2FileUtils.isSupportedImageFile(entry) && !/\.(json|csv|txt|xml)$/i.test(entry.name)) continue;
                 const file = await entry.getFile();
                 Object.defineProperty(file, 'webkitRelativePath', { value: `${prefix}${file.name}` });
@@ -98,20 +103,44 @@
             return { ...value, files, status: files.some(window.SAM2FileUtils.isSupportedImageFile) ? 'ready' : 'missing' };
         } catch (error) { return { ...value, status: 'missing', error: error.message }; }
     }
-    async function attach(files) {
-        const candidates = await open();
-        const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))).join(',');
-        const matches = [];
-        for (const file of files) {
-            const hash = await digest(file);
-            const matching = [];
-            for (const candidate of candidates.filter(item => item.name === file.name && item.size === file.size)) {
-                if (await digest(candidate) === hash) matching.push(candidate);
+    function attach(files) {
+        return withFolderPicker(async () => {
+            const dialog = document.getElementById('imageFolderDialog');
+            const choose = document.getElementById('chooseImageFolder');
+            const cancel = document.getElementById('cancelImageFolder');
+            try {
+                const root = await new Promise((resolve, reject) => {
+                    dialog.onclose = () => {
+                        if (!dialog.open) reject(new DOMException('Folder selection cancelled.', 'AbortError'));
+                    };
+                    dialog.oncancel = event => { if (choose.disabled) event.preventDefault(); };
+                    choose.onclick = () => {
+                        choose.disabled = cancel.disabled = true;
+                        // The file input's change event does not grant a second picker gesture.
+                        try { resolve(window.showDirectoryPicker({ mode: 'readwrite' })); }
+                        catch (error) { reject(error); }
+                    };
+                    dialog.showModal();
+                });
+                const candidates = await readDirectory(root, new Set(files.map(file => file.name)));
+                const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))).join(',');
+                const matches = [];
+                for (const file of files) {
+                    const hash = await digest(file);
+                    const matching = [];
+                    for (const candidate of candidates.filter(item => item.name === file.name && item.size === file.size)) {
+                        if (await digest(candidate) === hash) matching.push(candidate);
+                    }
+                    if (matching.length !== 1) throw new Error(`Choose the folder containing exactly one copy of ${file.name}. No images were opened.`);
+                    matches.push([file, matching[0]]);
+                }
+                for (const [file, candidate] of matches) locations.set(file, locations.get(candidate));
+            } finally {
+                dialog.onclose = dialog.oncancel = choose.onclick = null;
+                if (dialog.open) dialog.close();
+                choose.disabled = cancel.disabled = false;
             }
-            if (matching.length !== 1) throw new Error(`Choose the folder containing exactly one copy of ${file.name}. No images were opened.`);
-            matches.push([file, matching[0]]);
-        }
-        for (const [file, candidate] of matches) locations.set(file, locations.get(candidate));
+        });
     }
     function location(file) {
         const result = locations.get(file);

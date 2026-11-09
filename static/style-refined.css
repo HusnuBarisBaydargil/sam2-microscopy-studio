@@ -2081,8 +2081,12 @@ summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 3
     .workspace-toolbar .panel-toggle { width: 44px; }
 }
 
-#projectDialog { color: var(--text-color, #e7e9ed); background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 12px; width: min(680px, 94vw); max-height: 90vh; overflow-y: auto; padding: 24px; margin: auto; }
-#projectDialog::backdrop { background: #0009; }
+#projectDialog, #imageFolderDialog { color: var(--text-color, #e7e9ed); background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 12px; max-height: 90vh; overflow-y: auto; padding: 24px; margin: auto; }
+#projectDialog { width: min(680px, 94vw); }
+#imageFolderDialog { width: min(440px, 94vw); }
+#projectDialog::backdrop, #imageFolderDialog::backdrop { background: #0009; }
+#imageFolderDialog p { margin: 12px 0 20px; line-height: 1.5; }
+#imageFolderDialog form { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 #projectDialog label, #projectDialog button { display: block; margin-top: 12px; }
 #projectDialog p { line-height: 1.5; }
 #projectDialog h3, #projectDialog hr { margin-top: 20px; }

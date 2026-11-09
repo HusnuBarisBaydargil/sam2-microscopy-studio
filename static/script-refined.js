@@ -2114,7 +2114,7 @@ ${badgeInfo.title}`;
     function handleKeyDown(event) {
         // Native dialog handles focus, text editing, and Escape. Workspace
         // shortcuts must not reach the annotations behind it.
-        if (projectDialog.open) return;
+        if (projectDialog.open || document.getElementById('imageFolderDialog').open) return;
         if (appState.projectSettings?.taskType === 'instance_segmentation') return;
         const modal = modalKeyboardController.visibleModal([samSettingsModal, preprocessSettingsModal, helpModal]);
         if (event.key === 'Escape') {

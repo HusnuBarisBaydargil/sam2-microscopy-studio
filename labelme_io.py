@@ -28,7 +28,22 @@ def _flags(value):
         raise ValueError("Labelme flags must be an object of boolean values")
 
 
-def inspect_labelme(raw, image, image_name):
+def _shape_geometry(shape, *, for_import):
+    kind = shape.get("shape_type", "polygon")
+    points = shape.get("points")
+    if for_import and kind == "polygon" and isinstance(points, list):
+        # Drop zero-length edges in the point list without moving any vertex.
+        unique = []
+        for point in points:
+            if (unique and point == unique[-1] and isinstance(point, list)
+                    and len(point) == 2 and all(type(coord) in (int, float) for coord in point)):
+                continue
+            unique.append(point)
+        points = unique
+    return {"type": kind, "points": points}
+
+
+def inspect_labelme(raw, image, image_name, *, for_import=False):
     """Validate the entire file before any class or annotation is changed."""
     if not isinstance(raw, dict) or not isinstance(raw.get("shapes"), list):
         raise ValueError("Expected Labelme JSON with a shapes list")
@@ -63,7 +78,7 @@ def inspect_labelme(raw, image, image_name):
         if shape.get("description") is not None and not isinstance(shape["description"], str):
             raise ValueError(f"Shape {index}: description must be text")
         try:
-            normalize_geometry({"type": kind, "points": shape.get("points")}, image["width"], image["height"])
+            normalize_geometry(_shape_geometry(shape, for_import=for_import), image["width"], image["height"])
         except ValueError as error:
             raise ValueError(f"Shape {index} ({label}): {error}") from None
         if label not in labels:
@@ -75,7 +90,7 @@ def inspect_labelme(raw, image, image_name):
 
 
 def import_labelme(raw, *, image, image_name, project_id, classes, next_object_id):
-    inspect_labelme(raw, image, image_name)
+    inspect_labelme(raw, image, image_name, for_import=True)
     class_ids = {item["name"]: item["id"] for item in classes}
     annotations = []
     for shape in raw["shapes"]:
@@ -83,7 +98,7 @@ def import_labelme(raw, *, image, image_name, project_id, classes, next_object_i
             raise ValueError(f"Could not create class: {shape['label']}")
         annotations.append({"id": next_object_id, "class_id": class_ids[shape["label"]],
                             "source": "imported", "edited": False,
-                            "geometry": {"type": shape.get("shape_type", "polygon"), "points": deepcopy(shape["points"])},
+                            "geometry": deepcopy(_shape_geometry(shape, for_import=True)),
                             "labelme": {k: deepcopy(v) for k, v in shape.items() if k not in SHAPE_FIELDS}})
         next_object_id += 1
     return {"schema_version": 1, "task_type": "instance_segmentation", "project_id": project_id,

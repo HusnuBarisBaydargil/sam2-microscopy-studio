@@ -50,6 +50,125 @@ function directory(name,contents={}) {
 """, text=True, encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True)
 
 
+def test_selected_image_requests_folder_from_a_click_and_matches_only_selected_files():
+    subprocess.run([_node_executable(), "-"], input=r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const {File} = require('node:buffer');
+const choose = {disabled: false}, cancel = {disabled: false};
+const dialog = {
+    open: false,
+    showModal() { assert(!this.open); this.open = true; },
+    close() { this.open = false; this.onclose?.(); },
+};
+global.document = {getElementById: id => ({
+    imageFolderDialog: dialog, chooseImageFolder: choose, cancelImageFolder: cancel,
+})[id]};
+global.window = {};
+for (const name of ['frontendConfig', 'fileUtils', 'projectFolder']) {
+    eval(fs.readFileSync('static/' + name + '.js', 'utf8'));
+}
+const folders = window.SAM2ProjectFolder;
+const filesRead = [], writes = [];
+function directory(name, files) {
+    const contents = new Map(Object.entries(files));
+    function handle(filename) {
+        return {
+            name: filename, kind: 'file',
+            async getFile() {
+                filesRead.push([name, filename]);
+                return new File([contents.get(filename)], filename);
+            },
+            async createWritable() {
+                let pending;
+                return {
+                    async write(value) { pending = value; },
+                    async close() { contents.set(filename, pending); writes.push([name, filename]); },
+                };
+            },
+        };
+    }
+    return {
+        name, contents,
+        async *values() { for (const filename of contents.keys()) yield handle(filename); },
+        async queryPermission() { return 'granted'; },
+        async getFileHandle(filename) {
+            if (!contents.has(filename)) throw new DOMException('', 'NotFoundError');
+            return handle(filename);
+        },
+    };
+}
+const actual = directory('actual', {
+    'cell.bmp': 'pixels', 'cell.json': 'old outline', 'cell.csv': 'old boxes',
+    'other.bmp': 'other pixels', 'other.json': 'other outline', 'other.csv': 'other boxes',
+});
+const wrong = directory('wrong', {'cell.bmp': 'wrong!', 'cell.json': 'different outline'});
+const selected = new File(['pixels'], 'cell.bmp');
+let clicks = 0, activating = false, choice;
+window.showDirectoryPicker = options => {
+    assert(activating, 'The picker must run synchronously from the confirmation click');
+    assert.deepEqual(options, {mode: 'readwrite'});
+    clicks++;
+    if (!choice) throw new DOMException('', 'AbortError');
+    return Promise.resolve(choice);
+};
+function clickChoose() {
+    activating = true;
+    try { choose.onclick(); }
+    finally { activating = false; }
+}
+(async () => {
+    // Closing the confirmation itself must not launch the native picker.
+    let pending = folders.attach([selected]);
+    assert(dialog.open);
+    assert.equal(clicks, 0);
+    dialog.close();
+    await assert.rejects(pending, {name: 'AbortError'});
+    assert(!folders.has(selected));
+
+    pending = folders.attach([selected]);
+    assert.equal(clicks, 0);
+    clickChoose();
+    await assert.rejects(pending, {name: 'AbortError'});
+    assert(!dialog.open && !choose.disabled && !cancel.disabled);
+    assert(!folders.has(selected));
+    assert.deepEqual(filesRead, []);
+
+    choice = wrong;
+    pending = folders.attach([selected]);
+    clickChoose();
+    await assert.rejects(pending, /folder containing exactly one copy/);
+    assert(!folders.has(selected));
+    assert.deepEqual(filesRead, [['wrong', 'cell.bmp']]);
+    assert.deepEqual(writes, []);
+
+    choice = actual;
+    pending = folders.attach([selected]);
+    assert.equal(clicks, 2);
+    clickChoose();
+    await pending;
+    assert(folders.has(selected));
+    assert(!dialog.open && !choose.disabled && !cancel.disabled);
+    assert.equal(folders.imagePath(selected), 'cell.bmp');
+    assert.deepEqual(filesRead, [['wrong', 'cell.bmp'], ['actual', 'cell.bmp']]);
+
+    for (const [filename, existing] of [['cell.json', 'old outline'], ['cell.csv', 'old boxes']]) {
+        assert.equal(await folders.read(selected, filename), existing);
+        await folders.write(selected, filename, 'edited');
+        assert.equal(actual.contents.get(filename), 'edited');
+        await folders.write(selected, filename, existing);
+        assert.equal(actual.contents.get(filename), existing);
+    }
+    assert.deepEqual(writes, [
+        ['actual', 'cell.json'], ['actual', 'cell.json'],
+        ['actual', 'cell.csv'], ['actual', 'cell.csv'],
+    ]);
+    assert.equal(actual.contents.get('other.json'), 'other outline');
+    assert.equal(actual.contents.get('other.csv'), 'other boxes');
+})().catch(error => { console.error(error); process.exit(1); });
+""", text=True, encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True)
+
+
 def test_detection_reopen_preserves_project_classes_and_saved_id_mapping():
     subprocess.run([_node_executable(), '-'], input=r"""
 const assert=require('assert'),fs=require('fs'),vm=require('vm');
