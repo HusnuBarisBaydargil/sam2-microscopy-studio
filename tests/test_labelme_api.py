@@ -224,6 +224,49 @@ def labelme(image):
                         'group_id': 42, 'description': 'preserve', 'points': [[10, 10], [50, 10], [50, 40], [10, 40]]}]}
 
 
+def test_json_import_collapses_exact_consecutive_duplicates(client, polygon_project):
+    headers, image, old = polygon_project
+    endpoint = '/api/project/segmentation'
+    raw = labelme(image)
+    shape = raw['shapes'][0]
+    # A distinct, very close vertex is preserved alongside the original vertices.
+    points = [[10, 10], [49.999999999, 10], [50, 10], [50, 40], [10, 40]]
+    shape['points'] = points[:3] + [[50.0, 10.0], [50, 10]] + points[3:]
+    raw['shapes'].append({**shape, 'points': [[60, 10], [80, 10], [80, 30], [60, 30]]})
+    payload = {'image': image, 'image_name': 'cells.tiff', 'labelme': raw}
+
+    inspected = client.post(endpoint, headers=headers, json={**payload, 'action': 'inspect_labelme'})
+    assert inspected.status_code == 200, inspected.get_json()
+    assert inspected.get_json() == {'count': 2, 'review_status': 'in_progress'}
+
+    response = client.post(endpoint, headers=headers, json={**payload, 'action': 'import_labelme',
+        'next_object_id': old['next_object_id'], 'revision': None})
+    assert response.status_code == 200, response.get_json()
+    first, second = response.get_json()['document']['annotations']
+    assert first['geometry']['points'] == points
+    assert first['area'] == 1200
+    assert first['labelme'] == {'flags': {'occluded': True}, 'group_id': 42, 'description': 'preserve'}
+    assert second['geometry']['points'] == raw['shapes'][1]['points']
+    assert client.post(endpoint, headers=headers, json={'action': 'load', 'image': image}).get_json()['revision'] is None
+
+
+@pytest.mark.parametrize('points, error', [
+    ([[10, 10], [40, 10], [10, 10], [40, 40], [10, 40]], 'overlap at the same location'),
+    ([[1, 10], [True, 10], [40, 10], [40, 40], [1, 40]], 'coordinates must be finite numbers'),
+    ([[10, 10], [10, 10], [40, 40]], 'needs 3 to 512 points'),
+])
+def test_json_import_still_rejects_invalid_polygons(client, polygon_project, points, error):
+    headers, image, old = polygon_project
+    raw = labelme(image)
+    raw['shapes'][0]['points'] = points
+    response = client.post('/api/project/segmentation', headers=headers, json={
+        'action': 'import_labelme', 'image': image, 'image_name': 'cells.tiff', 'labelme': raw,
+        'next_object_id': old['next_object_id'], 'revision': None,
+    })
+    assert response.status_code == 400, response.get_json()
+    assert error in response.get_json()['error']
+
+
 @pytest.mark.parametrize("kind", ["polygon", "rectangle", "circle"])
 def test_import_classes_save_reopen_and_export(client, polygon_project, app_module, kind):
     headers, image, old = polygon_project
