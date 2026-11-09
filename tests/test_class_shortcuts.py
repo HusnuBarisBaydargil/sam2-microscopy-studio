@@ -34,7 +34,7 @@ change('');assert.equal(state.classes[0].hotkey,'');assert.equal(saved,1);
 change('s');assert.equal(state.classes[0].hotkey,'s');assert.equal(saved,2);
 let actions=[];
 const appState={currentImage:{},classes:[{name:'Legacy B',hotkey:'b'},{name:'Legacy U',hotkey:'u'},{name:'Z class',hotkey:'z'}],selectedAnnotationIds:new Set(),isManualMode:false,isAwaitingChoice:true,choiceInfo:{}};
-const bindings={projectDialog:{open:false},modalKeyboardController:{visibleModal:()=>null},samSettingsModal:{},preprocessSettingsModal:{},helpModal:{},document:{activeElement:{tagName:'BUTTON'}},appState,classManagerLogic:manager,finalizeAnnotation:name=>actions.push(name),toggleManualMode:()=>actions.push('box'),handleUndoAction:()=>actions.push('undo'),handleRedoAction:()=>actions.push('redo'),arrowKeyDelta:()=>null,processSelection:name=>actions.push(name)};
+const bindings={projectDialog:{open:false},modalKeyboardController:{visibleModal:()=>null},samSettingsModal:{},preprocessSettingsModal:{},helpModal:{},document:{activeElement:{tagName:'BUTTON'},getElementById:()=>({open:false})},appState,classManagerLogic:manager,finalizeAnnotation:name=>actions.push(name),toggleManualMode:()=>actions.push('box'),handleUndoAction:()=>actions.push('undo'),handleRedoAction:()=>actions.push('redo'),arrowKeyDelta:()=>null,processSelection:name=>actions.push(name)};
 const keydown=new Function(...Object.keys(bindings),'event',body('handleKeyDown'));
 function key(key,ctrlKey=false){keydown(...Object.values(bindings),{key,ctrlKey,preventDefault(){}});}
 key('b');key('u');key('z',true);key('z');key('b',true);

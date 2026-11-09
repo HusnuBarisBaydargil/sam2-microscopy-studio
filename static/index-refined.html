@@ -625,6 +625,14 @@
         </div>
     </div>
     <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
+    <dialog id="imageFolderDialog" aria-labelledby="imageFolderTitle" aria-describedby="imageFolderHint">
+        <h2 id="imageFolderTitle">Allow autosave in this folder</h2>
+        <p id="imageFolderHint">Choose the folder containing your selection to save annotations beside the images.</p>
+        <form method="dialog">
+            <button id="cancelImageFolder" type="submit" class="btn btn-secondary">Cancel</button>
+            <button id="chooseImageFolder" type="button" class="btn btn-primary" autofocus>Choose containing folder</button>
+        </form>
+    </dialog>
     <dialog id="projectDialog" aria-labelledby="projectChooserHeading">
         <h2 id="projectChooserHeading">Choose your project</h2>
         <p>Current project: <span id="activeProjectName"></span></p>

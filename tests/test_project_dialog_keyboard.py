@@ -9,7 +9,7 @@ def test_project_dialog_isolates_keyboard_and_closed_workspace_still_works():
 const fs=require('fs'),assert=require('assert');
 const source=fs.readFileSync('static/script-refined.js','utf8');
 const body=source.match(/    function handleKeyDown\(event\) \{([\s\S]*?)\n    \}/)[1];
-const dialog={open:true};
+const dialog={open:true},imageFolderDialog={open:false};
 const isolated=new Function('projectDialog','event',body);
 // No workspace bindings are provided: any attempt to access one fails this test.
 for(const key of ['Delete','Backspace','b','u','z','y','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Escape','Tab','Enter']) {
@@ -19,12 +19,15 @@ for(const key of ['Delete','Backspace','b','u','z','y','ArrowLeft','ArrowRight',
 }
 const calls=[];
 const state={classes:[],currentImage:{},selectedAnnotationIds:new Set([1]),isManualMode:false};
-const bindings={classManagerLogic:{isReservedHotkey:key=>['b','u'].includes(key.toLowerCase())},projectDialog:dialog,modalKeyboardController:{visibleModal:()=>null},samSettingsModal:{},preprocessSettingsModal:{},helpModal:{},document:{activeElement:{tagName:'BUTTON'}},appState:state,toggleManualMode:()=>calls.push('manual'),annotationController:{deleteAnnotationsByIds:()=>{calls.push('delete');return [];}},currentAnnotations:()=>[],currentCandidates:()=>[],currentHistory:()=>[],currentRedoHistory:()=>[],handleUndoAction:()=>calls.push('undo'),handleRedoAction:()=>calls.push('redo'),arrowKeyDelta:key=>key==='ArrowRight'?{dx:1,dy:0}:null,nudgeSelectedAnnotations:()=>calls.push('nudge')};
+const bindings={classManagerLogic:{isReservedHotkey:key=>['b','u'].includes(key.toLowerCase())},projectDialog:dialog,modalKeyboardController:{visibleModal:()=>null},samSettingsModal:{},preprocessSettingsModal:{},helpModal:{},document:{activeElement:{tagName:'BUTTON'},getElementById:id=>{assert.equal(id,'imageFolderDialog');return imageFolderDialog;}},appState:state,toggleManualMode:()=>calls.push('manual'),annotationController:{deleteAnnotationsByIds:()=>{calls.push('delete');return [];}},currentAnnotations:()=>[],currentCandidates:()=>[],currentHistory:()=>[],currentRedoHistory:()=>[],handleUndoAction:()=>calls.push('undo'),handleRedoAction:()=>calls.push('redo'),arrowKeyDelta:key=>key==='ArrowRight'?{dx:1,dy:0}:null,nudgeSelectedAnnotations:()=>calls.push('nudge')};
 const handler=new Function(...Object.keys(bindings),'event',body);
 const event=key=>({key,ctrlKey:key==='z'||key==='y',preventDefault(){}});
 for(const key of ['b','Delete','u','z','y','ArrowRight']) handler(...Object.values(bindings),event(key));
 assert.deepEqual(calls,[]);
-dialog.open=false;
+dialog.open=false;imageFolderDialog.open=true;
+for(const key of ['b','Delete','u','z','y','ArrowRight']) handler(...Object.values(bindings),event(key));
+assert.deepEqual(calls,[]);
+imageFolderDialog.open=false;
 for(const key of ['b','Delete','u','z','y','ArrowRight']) handler(...Object.values(bindings),event(key));
 assert.deepEqual(calls,['manual','delete','undo','undo','redo','nudge']);
 // Keep the existing cancellation guard while a project switch is being saved.

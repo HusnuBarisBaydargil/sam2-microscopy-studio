@@ -1346,6 +1346,7 @@
             byId('ZoomLabel').textContent = '100%'; render();
         };
         function keyboard(event) {
+            if (document.getElementById('imageFolderDialog').open) return;
             if (promptSession && !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName) && !event.target.isContentEditable) {
                 if (event.key === 'Escape') { event.preventDefault(); byId('PromptCancel').click(); }
                 if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') { event.preventDefault(); byId('PromptUndo').click(); }
