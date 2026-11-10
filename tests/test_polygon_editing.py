@@ -888,7 +888,7 @@ const points = () => find('data-object-id',1).getAttribute('points');
     // Review is an explicit saved decision, independent of autosave. Reopening
     // a folder restores its queue, including reviewed images not yet visited.
     const reviewFiles=['a.png','b.png','c.png'].map(name=>new File([name],name));
-    const reviewDocs=new Map(),reviewDisk=new Map();let reviewFail=false,reviewWrites=0,finishQueueScan;
+    const reviewDocs=new Map(),reviewDisk=new Map(),releases=[];let reviewFail=false,reviewWrites=0,finishQueueScan;
     for(const [index,file] of reviewFiles.entries()) {
         const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
         const identity=Array.from(new Uint8Array(hash),byte=>byte.toString(16).padStart(2,'0')).join('');
@@ -901,6 +901,7 @@ const points = () => find('data-object-id',1).getAttribute('points');
     window.SAM2ApiClient={async apiFetch(path,options){
         if(path==='api/load_image')return response({width:100,height:100,image_url:'fixture'});
         const data=JSON.parse(options.body);
+        if(path==='api/sam/release_image'){releases.push({identity:data.image_identity,writes:reviewWrites});return {ok:true};}
         if(data.action==='load')return response({document:reviewDocs.get(data.image.identity),revision:null});
         if(data.action==='import_labelme')return response({document:data.labelme.document,classes:reviewClasses});
         if(data.action==='inspect_labelme')return response({review_status:data.labelme.document.review_status,count:data.labelme.document.annotations.length});
@@ -921,11 +922,16 @@ const points = () => find('data-object-id',1).getAttribute('points');
     filter('completed');assert.equal(el('polygonImageQueue').children.length,1);
     filter('needs_review');assert.equal(el('polygonImageQueue').children.length,2);filter('all');
     el('polygonDraw').click();assert(el('polygonReviewNext').disabled);el('polygonCancel').click();
-    await el('polygonPromptStart').click();assert(el('polygonReviewNext').disabled);el('polygonPromptCancel').click();
+    saved.image=reviewDisk.get('a.json').document.image;
+    await el('polygonPromptStart').click();assert(el('polygonReviewNext').disabled);
+    await svg.onclick(event(svg,22,22));el('polygonPromptCancel').click();
+    assert.deepEqual(releases,[]);
     reviewFail=true;await el('polygonReviewNext').click();
+    assert.deepEqual(releases,[]);
     assert.equal(el('polygonImageList').value,'0');assert.equal(el('polygonReviewCount').textContent,'1 / 3 reviewed');
     assert(el('polygonReviewNext').disabled);assert(!el('polygonSave').hidden);
     reviewFail=false;await el('polygonSave').click();
+    assert.deepEqual(releases,[{identity:saved.image.identity,writes:1}]);
     assert.equal(reviewDisk.get('a.json').document.review_status,'reviewed');assert.equal(el('polygonReviewCount').textContent,'2 / 3 reviewed');
     await el('polygonReviewNext').click();assert.equal(el('polygonImageList').value,'1');
     assert.equal(el('polygonReviewNext').textContent,'Confirm empty & next');
@@ -933,7 +939,12 @@ const points = () => find('data-object-id',1).getAttribute('points');
     assert.equal(reviewDisk.get('b.json').document.review_status,'confirmed_empty');
     assert.equal(el('polygonReviewCount').textContent,'3 / 3 reviewed');assert.equal(el('polygonImageList').value,'1');
     assert(el('polygonReviewNext').disabled);
+    assert.equal(releases.length,1); // Manual review of B created no SAM2 cache to release.
+    saved.image=reviewDisk.get('b.json').document.image;
+    await el('polygonPromptStart').click();
+    await svg.onclick(event(svg,22,22));el('polygonPromptCancel').click();
     await el('polygonPrevious').click();assert.equal(el('polygonReviewState').textContent,'Reviewed');
+    assert.deepEqual(releases[1],{identity:saved.image.identity,writes:2});
     select();await listeners.keydown({key:'Delete',target:svg,preventDefault(){}});
     assert.equal(reviewDisk.get('a.json').document.review_status,'unreviewed');assert.equal(el('polygonReviewCount').textContent,'2 / 3 reviewed');
     await el('polygonUndo').click();assert.equal(reviewDisk.get('a.json').document.review_status,'reviewed');
