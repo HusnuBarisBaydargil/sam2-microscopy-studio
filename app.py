@@ -89,6 +89,7 @@ from sam_service import (
     SamInferenceBusyError,
     SamInferenceTimeoutError,
     SAMModelHandler,
+    SamModelUnavailableError,
     normalize_sam_device,
     normalize_sam_settings,
     sam_presets_response,
@@ -176,7 +177,7 @@ SAM_INFERENCE_SEMAPHORE = threading.BoundedSemaphore(SAM_MAX_CONCURRENT_REQUESTS
 SAM_INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=SAM_MAX_CONCURRENT_REQUESTS)
 
 
-def _run_sam_inference_with_limits(rgb_image, sam_settings, points=None, project_id=None, split_geometry=None):
+def _run_sam_inference_with_limits(rgb_image, sam_settings, points=None, project_id=None, split_geometry=None, image_identity=None):
     if not SAM_INFERENCE_SEMAPHORE.acquire(timeout=SAM_QUEUE_TIMEOUT_SECONDS):
         raise SamInferenceBusyError(
             "SAM2 inference is already running. Try again after the current request finishes."
@@ -185,7 +186,7 @@ def _run_sam_inference_with_limits(rgb_image, sam_settings, points=None, project
     def _generate_masks():
         try:
             if points is not None:
-                return sam_model_handler.predict_points(rgb_image, points, project_id, **({"split_geometry": split_geometry} if split_geometry is not None else {}))
+                return sam_model_handler.predict_points(rgb_image, points, project_id, split_geometry, image_identity)
             return sam_model_handler.generate_masks(rgb_image, sam_settings)
         finally:
             SAM_INFERENCE_SEMAPHORE.release()
@@ -1187,6 +1188,17 @@ def save_annotations_endpoint():
     except Exception as e:
         return jsonify({"error": f"Failed to save annotations: {e}"}), 500
 
+@sam_bp.route("/sam/release_image", methods=["POST"])
+def release_sam_image_endpoint():
+    project_id = request.headers.get("X-Project-ID")
+    data = request.get_json(silent=True)
+    identity = data.get("image_identity") if isinstance(data, dict) else None
+    if not project_id or not isinstance(identity, str) or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+        return jsonify({"error": "Project and image identity are required."}), 400
+    sam_model_handler.release_image(project_id, identity)
+    return "", 204
+
+
 @sam_bp.route("/run_sam", methods=["POST"])
 def run_sam_endpoint():
     polygon_output = request.form.get("output") == "polygons"
@@ -1200,7 +1212,7 @@ def run_sam_endpoint():
         return jsonify({"error": "Open a segmentation project first."}), 409
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
-    if not sam_model_handler.is_ready():
+    if sam_model_handler.skip_model_load and not sam_model_handler.is_ready():
         return jsonify({"error": "SAM2 model is not available on the server."}), 503
     file = request.files['image']
     try:
@@ -1240,6 +1252,7 @@ def run_sam_endpoint():
                 if not 2 <= len(points) <= 16 or any(point[2] != 1 for point in points):
                     raise ValueError("Split needs 2–16 include clicks.")
             filtered_masks = _run_sam_inference_with_limits(rgb_image, sam_settings, points, project_id,
+                image_identity=hashlib.sha256(image_stream).hexdigest(),
                 **({"split_geometry": split_geometry} if split_geometry is not None else {}))
         else:
             filtered_masks = _run_sam_inference_with_limits(rgb_image, sam_settings)
@@ -1262,6 +1275,8 @@ def run_sam_endpoint():
         })
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    except SamModelUnavailableError as e:
+        return jsonify({"error": str(e)}), 503
     except SamInferenceBusyError as e:
         return jsonify({"error": str(e)}), 429
     except SamInferenceTimeoutError as e:

@@ -96,6 +96,17 @@
             if (busy || drag || camera.isPanning) { message('Finish the current operation first.', true); return false; }
             return !(state?.dirty || draft?.length || localTools.session?.start || promptSession?.points.length || state?.proposals.length) || window.confirm('Discard unfinished work on this image?');
         }
+        let promptedImageIdentity = null;
+        function releaseSamImage() {
+            if (promptedImageIdentity === null) return;
+            const identity = promptedImageIdentity;
+            promptedImageIdentity = null;
+            void window.SAM2ApiClient.apiFetch('api/sam/release_image', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_identity: identity }), keepalive: true
+            }).catch(() => {});
+        }
+        window.addEventListener('pagehide', releaseSamImage);
         function beforeUnload(event) {
             if (busy || drag || state?.dirty || draft?.length || localTools.session?.start || promptSession?.points.length || state?.proposals.length) { event.preventDefault(); event.returnValue = ''; }
         }
@@ -125,12 +136,16 @@
         }
         // Called inside operate: one save at a time, with editing/navigation locked
         // until the server acknowledges this document and its new revision.
-        const saveChanges = window.SAM2PolygonPersistence.createSaveChanges({
+        const persistChanges = window.SAM2PolygonPersistence.createSaveChanges({
             get state() { return state; }, get queue() { return queue; }, get currentIndex() { return currentIndex; },
             get folderLoadFailed() { return folderLoadFailed; },
             get revision() { return revision; }, set revision(value) { revision = value; },
             set saving(value) { saving = value; }, set saveError(value) { saveError = value; }
         }, { request, render, message });
+        async function saveChanges() {
+            await persistChanges();
+            if (completedReview(reviewStatus(state.document))) releaseSamImage();
+        }
         function renderQueue(locked) {
             if (state && currentIndex >= 0) imageReviews.set(queue[currentIndex], {
                 status: reviewStatus(state.document), count: state.document.annotations.length,
@@ -666,6 +681,7 @@
             if (!session.points.length || session.mode === 'split' && session.points.length < 2) { render(); return; }
             return operate(async () => {
                 const sourceState = state, file = queue[currentIndex];
+                promptedImageIdentity = sourceState.document.image.identity;
                 const response = await window.SAM2ApiWorkflows.runSam({ file, imageName: `image${file.name.match(/\.[^.]+$/)?.[0] || '.png'}`,
                     samSettings: { preset: byId('SamPreset').value }, preprocessMethod: activePreprocess,
                     preprocessParams: appliedPreprocessParams, output: 'polygons', points: structuredClone(session.points), splitGeometry: session.parentGeometry });
@@ -916,6 +932,7 @@
                 if (localAnnotation !== null && localAutosave === null) loaded.document = { schema_version: 1, task_type: 'instance_segmentation',
                     project_id: loaded.document.project_id, image, next_object_id: loaded.document.next_object_id, annotations: [] };
                 if (disposed) return;
+                releaseSamImage();
                 state = createPolygonState(loaded.document);
                 folderLoadFailed = false;
                 revision = loaded.revision;
@@ -1386,7 +1403,7 @@
         }
         document.addEventListener('keydown', keyboard);
         renderClasses(); render();
-        return { canLeave, hasImages: () => queue.length > 0, resume: resumeWorkspace, dispose() { disposed = true; endPan(); viewport.unbindPanning(); resizeObserver.disconnect(); viewport.unbindWheel(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('keydown', keyboard); } };
+        return { canLeave, hasImages: () => queue.length > 0, resume: resumeWorkspace, dispose() { releaseSamImage(); window.removeEventListener('pagehide', releaseSamImage); disposed = true; endPan(); viewport.unbindPanning(); resizeObserver.disconnect(); viewport.unbindWheel(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('keydown', keyboard); } };
     }
     window.SAM2PolygonEditor = { mount };
 })();

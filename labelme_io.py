@@ -9,6 +9,7 @@ from annotation_io import MAX_CLASS_NAME_LENGTH
 from review_io import default_review_status, validate_review_status
 from segmentation_io import MAX_OBJECTS, normalize_geometry
 
+EDGE_ROUNDOFF_PIXELS = 1e-9
 STUDIO_KEY = "microscopy_studio"
 ROOT_FIELDS = {"version", "imagePath", "imageData", "imageWidth", "imageHeight", "shapes", STUDIO_KEY}
 SHAPE_FIELDS = {"label", "points", "shape_type", STUDIO_KEY}
@@ -28,18 +29,29 @@ def _flags(value):
         raise ValueError("Labelme flags must be an object of boolean values")
 
 
-def _shape_geometry(shape, *, for_import):
+def _snap_edge_roundoff(value, limit):
+    if -EDGE_ROUNDOFF_PIXELS <= value < 0:
+        return 0
+    if limit < value <= limit + EDGE_ROUNDOFF_PIXELS:
+        return limit
+    return value
+
+
+def _shape_geometry(shape, image, *, for_import):
     kind = shape.get("shape_type", "polygon")
     points = shape.get("points")
     if for_import and kind == "polygon" and isinstance(points, list):
-        # Drop zero-length edges in the point list without moving any vertex.
-        unique = []
+        normalized = []
         for point in points:
-            if (unique and point == unique[-1] and isinstance(point, list)
-                    and len(point) == 2 and all(type(coord) in (int, float) for coord in point)):
-                continue
-            unique.append(point)
-        points = unique
+            if (isinstance(point, list) and len(point) == 2
+                    and all(type(coord) in (int, float) for coord in point)):
+                point = [_snap_edge_roundoff(point[0], image["width"]),
+                         _snap_edge_roundoff(point[1], image["height"])]
+                # Snapping can make two consecutive points coincide on the edge.
+                if normalized and point == normalized[-1]:
+                    continue
+            normalized.append(point)
+        points = normalized
     return {"type": kind, "points": points}
 
 
@@ -78,7 +90,7 @@ def inspect_labelme(raw, image, image_name, *, for_import=False):
         if shape.get("description") is not None and not isinstance(shape["description"], str):
             raise ValueError(f"Shape {index}: description must be text")
         try:
-            normalize_geometry(_shape_geometry(shape, for_import=for_import), image["width"], image["height"])
+            normalize_geometry(_shape_geometry(shape, image, for_import=for_import), image["width"], image["height"])
         except ValueError as error:
             raise ValueError(f"Shape {index} ({label}): {error}") from None
         if label not in labels:
@@ -98,7 +110,7 @@ def import_labelme(raw, *, image, image_name, project_id, classes, next_object_i
             raise ValueError(f"Could not create class: {shape['label']}")
         annotations.append({"id": next_object_id, "class_id": class_ids[shape["label"]],
                             "source": "imported", "edited": False,
-                            "geometry": deepcopy(_shape_geometry(shape, for_import=True)),
+                            "geometry": deepcopy(_shape_geometry(shape, image, for_import=True)),
                             "labelme": {k: deepcopy(v) for k, v in shape.items() if k not in SHAPE_FIELDS}})
         next_object_id += 1
     return {"schema_version": 1, "task_type": "instance_segmentation", "project_id": project_id,

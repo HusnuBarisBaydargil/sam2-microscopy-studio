@@ -61,6 +61,30 @@ def test_external_shape_changes_and_other_projects_require_review():
     assert labelme_review_status(sample(), PROJECT) == 'in_progress'
 
 
+def test_import_snaps_only_polygon_edge_roundoff_and_preserves_source():
+    raw = sample()
+    raw['shapes'][0]['points'] = [
+        [-1e-12, -8.881784197001252e-16], [0, 0], [40.25, 1e-10],
+        [100 + 1e-12, 0], [100 + 1e-12, 80 + 1e-12], [-1e-12, 80 + 1e-12],
+    ]
+    original = copy.deepcopy(raw)
+    expected = [[0, 0], [40.25, 1e-10], [100, 0], [100, 80], [0, 80]]
+
+    assert inspect_labelme(raw, IMAGE, 'cells.tif', for_import=True) == ['Cell']
+    assert imported(raw)['annotations'][0]['geometry']['points'] == expected
+    assert raw == original
+    with pytest.raises(ValueError, match='coordinates must be finite numbers inside the image'):
+        inspect_labelme(raw, IMAGE, 'cells.tif')
+
+
+@pytest.mark.parametrize('outside', [-1e-7, 100 + 1e-7, float('inf'), float('nan')])
+def test_import_rejects_coordinates_beyond_polygon_edge_roundoff(outside):
+    raw = sample()
+    raw['shapes'][0]['points'][0][0] = outside
+    with pytest.raises(ValueError, match='coordinates must be finite numbers inside the image'):
+        imported(raw)
+
+
 def test_polygon_metadata_and_precision_survive_autosave_and_export(tmp_path):
     raw = sample()
     original = copy.deepcopy(raw)

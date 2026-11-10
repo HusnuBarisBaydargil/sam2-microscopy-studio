@@ -1,6 +1,7 @@
 import hashlib
 import os
 import threading
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
@@ -14,6 +15,7 @@ from sam_polygons import geometry_mask, mask_contour
 
 DEFAULT_SAM_DEVICE = os.environ.get("SAM_DEVICE", "auto").strip().lower() or "auto"
 SUPPORTED_SAM_DEVICES = {"auto", "cuda", "cpu"}
+SAM_IDLE_SECONDS = 120
 
 DEFAULT_SAM_PRESET = "cell_1920x1440"
 SAM_PRESETS = {
@@ -276,11 +278,17 @@ def normalize_sam_device(value=None):
     return device
 
 
+class SamModelUnavailableError(RuntimeError):
+    pass
+
+
 class SAMModelHandler:
     def __init__(self, cfg_path, checkpoint_path, requested_device=None, skip_model_load=False, display_path=str):
         self.model = None
         self._prompt_predictor = None
         self._prompt_key = None
+        self._prompt_source = None
+        self._idle_timer = None
         self.cfg_path = cfg_path
         self.checkpoint_path = checkpoint_path
         self.requested_device = normalize_sam_device(requested_device)
@@ -289,15 +297,13 @@ class SAMModelHandler:
         self.device = torch.device("cpu")
         self.last_error = None
         self._lock = threading.RLock()
+        try:
+            self.device = self._resolve_device(self.requested_device)
+        except RuntimeError as error:
+            self.last_error = str(error)
+            print(f"FATAL: {self.last_error}")
         if self.skip_model_load:
-            try:
-                self.device = self._resolve_device(self.requested_device)
-            except Exception as e:
-                self.last_error = str(e)
-                print(f"FATAL: {self.last_error}")
             print("INFO: SKIP_SAM_MODEL_LOAD=1; SAM2 model initialization skipped.")
-        else:
-            self._initialize_model()
 
     def _resolve_device(self, requested_device):
         if requested_device == "auto":
@@ -307,17 +313,13 @@ class SAMModelHandler:
         return torch.device(requested_device)
 
     def _initialize_model(self):
-        with self._lock:
-            self.model = None
-            self._prompt_predictor = None
-            self._prompt_key = None
-            self.last_error = None
-            try:
-                self.device = self._resolve_device(self.requested_device)
-            except Exception as e:
-                self.last_error = str(e)
-                print(f"FATAL: {self.last_error}")
-                return
+        self.last_error = None
+        try:
+            self.device = self._resolve_device(self.requested_device)
+        except RuntimeError as error:
+            self.last_error = str(error)
+            print(f"FATAL: {self.last_error}")
+            return
 
         if not os.path.exists(self.cfg_path):
             self.last_error = f"SAM2 config not found: {self.display_path(self.cfg_path)}"
@@ -339,29 +341,73 @@ class SAMModelHandler:
 
             model = model.to(self.device)
             model.eval()
-            with self._lock:
-                self.model = model
+            self.model = model
 
             print(f"INFO: SUCCESS: SAM2 model loaded successfully on {self.device}.")
         except Exception as e:
             self.last_error = f"Could not load SAM2 model. Error: {e}"
             print(f"FATAL: {self.last_error}")
-            with self._lock:
-                self.model = None
+            self.model = None
+
+    def _clear_prompt_image(self):
+        self._prompt_predictor = None
+        self._prompt_key = None
+        self._prompt_source = None
+
+    def _release_unused_cuda_memory(self):
+        if self.device.type == "cuda" and torch.cuda.is_initialized():
+            torch.cuda.empty_cache()
+
+    def release_image(self, project_id, image_identity):
+        with self._lock:
+            if self._prompt_source == (project_id, image_identity):
+                self._clear_prompt_image()
+                self._release_unused_cuda_memory()
+
+    def _cancel_idle_timer(self):
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+
+    def _unload_model(self):
+        self._cancel_idle_timer()
+        self._clear_prompt_image()
+        if self.model is not None:
+            self.model = None
+            self._release_unused_cuda_memory()
+
+    def _unload_if_idle(self, timer):
+        with self._lock:
+            if self._idle_timer is timer:
+                self._unload_model()
+
+    @contextmanager
+    def _inference(self):
+        with self._lock:
+            self._cancel_idle_timer()
+            if not self.is_ready() and not self.skip_model_load:
+                self._initialize_model()
+            if not self.is_ready():
+                raise SamModelUnavailableError(self.last_error or "SAM2 model is not available on the server.")
+            try:
+                yield
+            finally:
+                if not self.skip_model_load:
+                    timer = threading.Timer(SAM_IDLE_SECONDS, lambda: self._unload_if_idle(timer))
+                    timer.daemon = True
+                    self._idle_timer = timer
+                    timer.start()
 
     def set_requested_device(self, requested_device):
         requested_device = normalize_sam_device(requested_device)
-        if requested_device == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("CUDA was requested for SAM2, but CUDA is not available.")
+        device = self._resolve_device(requested_device)
         with self._lock:
-            if requested_device == self.requested_device and self.device == self._resolve_device(requested_device):
+            if requested_device == self.requested_device and self.device == device:
                 return
+            self._unload_model()
             self.requested_device = requested_device
-        if self.skip_model_load:
-            with self._lock:
-                self.device = self._resolve_device(self.requested_device)
-            return
-        self._initialize_model()
+            self.device = device
+            self.last_error = None
 
     def status(self):
         with self._lock:
@@ -369,7 +415,11 @@ class SAMModelHandler:
                 "mode": self.requested_device,
                 "active": str(self.device),
                 "cuda_available": torch.cuda.is_available(),
-                "ready": self.is_ready(),
+                "ready": self.is_ready() or (
+                    not self.skip_model_load and not self.last_error
+                    and os.path.isfile(self.cfg_path) and os.path.isfile(self.checkpoint_path)
+                ),
+                "loaded": self.is_ready(),
                 "model_load_skipped": self.skip_model_load,
                 "error": self.last_error,
             }
@@ -377,12 +427,10 @@ class SAMModelHandler:
     def is_ready(self):
         return self.model is not None
 
-    def predict_points(self, image_np, points, project_id, split_geometry=None):
+    def predict_points(self, image_np, points, project_id, split_geometry=None, image_identity=None):
         # Keep only one image embedding. Serialize access with automatic inference
         # and model/device changes; prompts themselves are never cached.
-        with self._lock, torch.inference_mode():
-            if not self.is_ready():
-                raise RuntimeError("SAM2 model is not initialized.")
+        with self._inference(), torch.inference_mode():
             key = (project_id, id(self.model), image_np.shape, hashlib.sha256(image_np.tobytes()).digest())
             if self._prompt_predictor is None or self._prompt_predictor.model is not self.model:
                 self._prompt_predictor = SAM2ImagePredictor(self.model)
@@ -390,6 +438,7 @@ class SAMModelHandler:
                 self._prompt_key = None
                 self._prompt_predictor.set_image(image_np)
                 self._prompt_key = key
+            self._prompt_source = (project_id, image_identity)
             if split_geometry is not None:
                 height, width = image_np.shape[:2]
                 parent = geometry_mask(split_geometry, width, height)
@@ -426,9 +475,7 @@ class SAMModelHandler:
             return [{"polygon_supported": True, "contour": contours[0].reshape(-1, 2).tolist()}]
 
     def generate_masks(self, image_np, sam_settings):
-        with self._lock:
-            if not self.is_ready():
-                raise RuntimeError("SAM2 model is not initialized.")
+        with self._inference():
             params = sam_settings["params"]
             mask_generator = SAM2AutomaticMaskGenerator(
                 model=self.model,
@@ -446,6 +493,7 @@ class SAMModelHandler:
                 use_m2m=params["use_m2m"],
             )
             raw_masks = mask_generator.generate(image_np)
+            del mask_generator
         filtered_masks = []
         min_area, max_area = effective_filter_areas(image_np, params)
         for mask_data in raw_masks:

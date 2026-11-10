@@ -16,8 +16,8 @@ def test_point_api_validates_and_uses_preprocessing(client, app_module, monkeypa
     image = cv2.imencode('.png', pixels)[1].tobytes()
     calls = []
     monkeypatch.setattr(app_module.sam_model_handler, 'is_ready', lambda: True)
-    def predict(rgb, settings, points, project_id):
-        calls.append((rgb, points, project_id))
+    def predict(rgb, settings, points, project_id, *, image_identity):
+        calls.append((rgb, points, project_id, image_identity))
         return [{'polygon_supported': True, 'contour': [[5, 5], [20, 5], [20, 20], [5, 20]]}]
     monkeypatch.setattr(app_module, '_run_sam_inference_with_limits', predict)
     def post(points, request_headers=headers):
@@ -28,8 +28,14 @@ def test_point_api_validates_and_uses_preprocessing(client, app_module, monkeypa
     response = post([[10, 10, 1], [30, 30, 0]])
     assert response.status_code == 200
     assert len(response.get_json()['proposals']) == 1
-    assert calls[0][1:] == ([[10, 10, 1], [30, 30, 0]], project['project_id'])
+    assert calls[0][1:] == ([[10, 10, 1], [30, 30, 0]], project['project_id'], response.get_json()['image']['identity'])
     assert not np.array_equal(calls[0][0], pixels)
+    releases = []
+    monkeypatch.setattr(app_module.sam_model_handler, 'release_image', lambda *args: releases.append(args))
+    identity = response.get_json()['image']['identity']
+    assert client.post('/api/sam/release_image', headers=headers, json={'image_identity': 'invalid'}).status_code == 400
+    assert client.post('/api/sam/release_image', headers=headers, json={'image_identity': identity}).status_code == 204
+    assert releases == [(project['project_id'], identity)]
     for points in ([], [[1, 1, 0]], [[50, 1, 1]], [[1, -1, 1]], [[True, 1, 1]],
                    [[1, 1, True]], [[1, 1, 2]], [[1, 1]], [[float('nan'), 1, 1]],
                    [[10**1000, 1, 1]], [[1, 1, 1]] * 65, {'x': 1}):
@@ -37,7 +43,7 @@ def test_point_api_validates_and_uses_preprocessing(client, app_module, monkeypa
     assert len(calls) == 1
     assert post([[1, 1, 1]], {}).status_code == 409
     assert post([[1, 1, 1]], {'X-Project-ID': 'stale'}).status_code == 409
-    monkeypatch.setattr(app_module, '_run_sam_inference_with_limits', lambda *args: [{'polygon_supported': False}])
+    monkeypatch.setattr(app_module, '_run_sam_inference_with_limits', lambda *args, **kwargs: [{'polygon_supported': False}])
     assert post([[1, 1, 1]]).status_code == 422
     monkeypatch.setattr(app_module.sam_model_handler, 'is_ready', lambda: False)
     assert post([[1, 1, 1]]).status_code == 503
@@ -79,6 +85,88 @@ def test_predictor_reuses_only_matching_embeddings_and_preserves_topology(monkey
     assert not handler.predict_points(image, [[10, 10, 1]], 'two')[0]['polygon_supported']
     mask[:] = 0
     assert not handler.predict_points(image, [[10, 10, 1]], 'two')[0]['polygon_supported']
+
+
+def test_model_loads_on_demand_and_only_latest_idle_timer_can_unload(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    import sam_service
+
+    timers, loads = [], []
+
+    class Timer:
+        def __init__(self, interval, callback):
+            assert interval == sam_service.SAM_IDLE_SECONDS
+            self.callback = callback
+            self.cancelled = False
+
+        def start(self):
+            assert self.daemon
+            timers.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr(sam_service, 'threading', SimpleNamespace(RLock=threading.RLock, Timer=Timer))
+    handler = sam_service.SAMModelHandler('', '', requested_device='cpu')
+
+    def load():
+        handler.model = object()
+        loads.append(handler.model)
+
+    class Generator:
+        def __init__(self, model, **_):
+            assert model is handler.model
+
+        def generate(self, image):
+            assert not any(not timer.cancelled for timer in timers)
+            return []
+
+    monkeypatch.setattr(handler, '_initialize_model', load)
+    monkeypatch.setattr(sam_service, 'SAM2AutomaticMaskGenerator', Generator)
+    image = np.zeros((40, 50, 3), dtype=np.uint8)
+    settings = sam_service.default_sam_settings()
+    assert not handler.status()['loaded'] and not loads and not timers
+
+    handler.generate_masks(image, settings)
+    handler.generate_masks(image, settings)
+    assert len(loads) == 1 and timers[0].cancelled
+    timers[0].callback()
+    assert handler.is_ready()
+    timers[1].callback()
+    assert not handler.status()['loaded']
+    handler.generate_masks(image, settings)
+    assert len(loads) == 2 and handler.is_ready()
+    timers[-1].callback()
+
+
+def test_release_image_drops_only_the_matching_prompt_cache(monkeypatch):
+    import sam_service
+
+    class Predictor:
+        def __init__(self, model):
+            self.model = model
+
+        def set_image(self, image):
+            self.size = image.shape[:2]
+
+        def predict(self, **_):
+            return np.zeros((1, *self.size), dtype=np.uint8), np.array([1.0]), None
+
+    monkeypatch.setattr(sam_service, 'SAM2ImagePredictor', Predictor)
+    handler = sam_service.SAMModelHandler('', '', requested_device='cpu', skip_model_load=True)
+    model = handler.model = object()
+    image = np.zeros((40, 50, 3), dtype=np.uint8)
+    handler.predict_points(image, [[10, 10, 1]], 'project', image_identity='image-a')
+    cached = handler._prompt_predictor
+    handler.release_image('other-project', 'image-a')
+    handler.predict_points(image, [[10, 10, 1]], 'project', image_identity='image-b')
+    handler.release_image('project', 'image-a')
+    assert handler._prompt_predictor is cached
+    handler.release_image('project', 'image-b')
+    assert handler._prompt_predictor is None and handler._prompt_key is None
+    assert handler.model is model
 
 
 def test_prompt_failure_releases_inference_slot(app_module, monkeypatch):
